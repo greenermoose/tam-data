@@ -24,13 +24,13 @@ This document outlines the architectural plan and phased roadmap for `tamdata`: 
 
 **Goal:** Establish the repository structure, build/test harness, terminal screen compositor, and core sheet data model.
 
-- [ ] **Build & Sanitizer Harness:**
+- [x] **Build & Sanitizer Harness:**
   - `Makefile` integrating `pkg-config libtam`, strict compiler warnings (`-Wall -Wextra -Werror`), and `make test` running under AddressSanitizer (`ASan`) and UndefinedBehaviorSanitizer (`UBSan`).
-- [ ] **VT & Terminal Engine (`td_term`):**
+- [x] **VT & Terminal Engine (`td_term`):**
   - Raw `termios` lifecycle, alternate screen switching, cursor visibility, `SIGWINCH` resize handling, and `SIGTSTP`/`SIGCONT` job control.
   - Double-buffered cell/line diffing renderer for flicker-free redraws on both Linux VTs and Wayland terminals.
   - Multi-key input state machine supporting prefix sequences (`g`, `z`, `gz`), arrow/function keys, and inline prompt editing.
-- [ ] **Core Data Model (`td_sheet`, `td_col`, `td_val`):**
+- [x] **Core Data Model (`td_sheet`, `td_col`, `td_val`):**
   - `td_sheet_t`: Sheet metadata, row/column vectors, cursor coordinates, selection bitset, and parent/source lineage.
   - `td_val_t`: Tagged value representation (`raw` string slice, `int64`, `double`, `date`/`timestamp`, `currency`, `null`/`error`).
   - Global sheet stack (`td_stack_t`) for pushing, popping (`q`), and switching sheets.

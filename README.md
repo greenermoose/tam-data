@@ -20,4 +20,20 @@
 
 ## Status
 
-`tamdata` is in early architectural development.
+Phase 0 (foundation, build system, and terminal engine) is complete: the
+strict C11 build links `libtam` statically, the sanitizer-backed test suite
+passes with zero leaks, and the demo shell renders and navigates a sample
+sheet in both modern terminals and bare Linux virtual consoles.
+
+Phase 1 (native CSV/TSV loaders and grid navigation) is next; see
+[`ROADMAP.md`](ROADMAP.md).
+
+## Building
+
+```sh
+make          # build/tamdata
+make test     # unit tests under ASan/UBSan
+make install  # install into $PREFIX (default: ~/.local/dev)
+```
+
+`libtam >= 0.4.0` is discovered via `pkg-config` or `LIBTAM_PREFIX`.
