@@ -2,6 +2,11 @@
 
 This document outlines the architectural plan and phased roadmap for `tam-data`: a pure-C, zero-Python rewrite of [VisiData](https://www.visidata.org/) built on the Tam C libraries (`libtam`) and designed to run natively on any Tamlinux system—including bare Linux virtual terminals (`TERM=linux`).
 
+**Current implementation:** v0.1.0 is a built-in demo. CSV/TSV input and
+output, cell editing, and analytical workflows below are planned. Performance
+figures in this roadmap are targets; no startup, memory, or file-loading
+benchmarks have been published for `tam-data`.
+
 ---
 
 ## Architectural Principles
@@ -12,9 +17,13 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 2. **First-Class Linux VT & Terminal Compatibility:**
    - Direct `termios` and escape-sequence rendering (building on `libtam` and the terminal engine patterns established in `tam`).
    - Graceful adaptation across bare Linux virtual consoles (`TERM=linux`, 8/16 colors, CP437/UTF-8 box drawing) and graphical terminal emulators (`foot`, 256-color/truecolor, synchronized output).
-3. **Instantaneous Startup & Low Memory Footprint:**
-   - Sub-millisecond cold start (`0–2 ms`).
-   - Arena-allocated and `mmap`-backed zero-copy string slices for raw tabular data so multi-megabyte CSV/TSV files open immediately without per-cell heap bloat.
+3. **Fast Startup & Low Memory Footprint (Targets, Unmeasured):**
+   - Aim for a `0–2 ms` startup; the measurement method and cold/warm cache
+     conditions still need to be defined and benchmarked.
+   - Plan arena-allocated and `mmap`-backed string slices for raw tabular
+     data to reduce per-cell allocation. The arena exists; file mapping and
+     CSV/TSV loading are not yet implemented. Large-file loading time and
+     memory use remain unmeasured.
 4. **VisiData Ergonomics & Muscle Memory:**
    - Preserve VisiData's modal keybindings (`g`, `z` prefixes), multi-sheet stack (`S`, `C`, `I`, `F`, `O`), non-destructive exploration, and command discoverability (`Ctrl+H`, `Space`).
 
