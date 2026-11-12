@@ -18,6 +18,8 @@
 
 > Address all four. The LICENSE should be GPL like the rest of Tamlinux.
 
+> Can we create a repo on GitHub now?
+
 “All four” refers to the preceding review's proposed license and provenance,
 build instructions for users outside Tamlinux, screenshot and demo example,
 and performance claims qualified as unmeasured goals.
@@ -34,8 +36,20 @@ and performance claims qualified as unmeasured goals.
   roadmap. State that only the demo currently runs.
 - Backfill earlier AI attribution from retained transcripts and commit
   trailers, explicitly recording the missing implementation transcript.
-- Keep the repository local; this request prepares files and does not create
-  a GitHub repository, push, tag, release, or deploy software.
+- The initial preparation request stayed local. Fred's later explicit
+  request authorized creating the public GitHub repository and publishing
+  the existing development branch.
+
+## GitHub publication
+
+Created [greenermoose/tam-data](https://github.com/greenermoose/tam-data) as
+a public repository on 2026-11-12 and connected it as `origin`. Publication
+uses the existing `dev` branch as the development/default branch. The local
+`main` branch is not part of this initial publication; no tag, release, or
+deployment is included.
+
+Commit `8b34fdb` contains the prepared licensing, provenance, screenshot,
+and documentation. This follow-up records Fred's publication request.
 
 ## Verification
 
@@ -54,3 +68,6 @@ and performance claims qualified as unmeasured goals.
   physical Linux-console test or performance benchmark was performed.
 - Checked local Markdown links, the GPL license copy, diff whitespace, and
   public provenance files for private identifiers and paths.
+- Before first publication, scanned all 71 Git objects reachable from the
+  prepared `dev` head for private identifiers, transcript paths, and private
+  repository references; no matches were found.
