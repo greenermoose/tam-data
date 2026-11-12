@@ -20,7 +20,27 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 ---
 
-## Phase 0: Foundation, Build System & Terminal Engine
+## Release Versioning & SemVer Plan
+
+`tam-data` adheres to [Semantic Versioning (SemVer 2.0.0)](https://semver.org/). Pre-1.0 minor releases track architectural milestones and feature sets, culminating in `v1.0.0` for full core parity and stable CLI interfaces:
+
+| Version | Phase | Milestone Scope | Status |
+| :--- | :--- | :--- | :--- |
+| **`v0.1.0`** | **Phase 0** | Foundation, build/sanitizers, VT terminal engine, core data model, demo shell | Completed |
+| **`v0.2.0`** | **Phase 1** | Native CSV/TSV parser, viewport rendering, grid navigation, atomic saver (**MVP**) | In Progress |
+| **`v0.3.0`** | **Phase 2** | Row selection bitset, regex search, filtering, and typed multi-column sorting | Planned |
+| **`v0.4.0`** | **Phase 3** | In-place editing, clipboard/yank ring, undo/redo, command replay log | Planned |
+| **`v0.5.0`** | **Phase 4** | Frequency tables (`F`), aggregation summaries (`+`), describe sheet (`I`), pivot/melt, joins | Planned |
+| **`v0.6.0`** | **Phase 5** | Embedded C expression engine (`td_expr`), computed/derived columns | Planned |
+| **`v1.0.0`** | **Phase 6** | Metasheets (`S`/`C`/`O`/Dir), command palette (`Space`/`Ctrl+H`), terminal plotting, extended formats | Planned |
+
+- **Patch Releases (`x.y.Z`)**: Bug fixes, terminal compatibility adjustments, performance enhancements, and sanitizer fixes without interface changes.
+- **Minor Releases (`0.Y.0`)**: Completion of each major roadmap phase leading up to `v1.0.0`.
+- **Major Release (`1.0.0`)**: Production-ready general availability with full VisiData core parity, complete metasheet support, and stable CLI/scripting behaviour.
+
+---
+
+## Phase 0: Foundation, Build System & Terminal Engine (v0.1.0)
 
 **Goal:** Establish the repository structure, build/test harness, terminal screen compositor, and core sheet data model.
 
@@ -37,7 +57,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 ---
 
-## Phase 1: Native CSV/TSV Loaders & Grid Navigation (MVP)
+## Phase 1: Native CSV/TSV Loaders & Grid Navigation (MVP / v0.2.0)
 
 **Goal:** Open any CSV or TSV file from disk or `stdin`, navigate it fluidly in a VT or terminal, inspect columns, and save changes back to disk.
 
@@ -57,7 +77,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 ---
 
-## Phase 2: Selection, Search, Filtering & Sorting
+## Phase 2: Selection, Search, Filtering & Sorting (v0.3.0)
 
 **Goal:** Enable interactive subsetting, regex searching, row selection, and multi-column sorting.
 
@@ -75,7 +95,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 ---
 
-## Phase 3: In-Place Editing, Clipboard, Undo/Redo & Command Log
+## Phase 3: In-Place Editing, Clipboard, Undo/Redo & Command Log (v0.4.0)
 
 **Goal:** Turn `tam-data` from an interactive explorer into a full tabular editor with reproducible command logs.
 
@@ -91,7 +111,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 ---
 
-## Phase 4: Aggregation, Frequency Tables, Pivot & Joins
+## Phase 4: Aggregation, Frequency Tables, Pivot & Joins (v0.5.0)
 
 **Goal:** Recreate VisiData's signature analytical workflows in native C.
 
@@ -110,7 +130,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 ---
 
-## Phase 5: Native C Expression Engine & Derived Columns
+## Phase 5: Native C Expression Engine & Derived Columns (v0.6.0)
 
 **Goal:** Provide computed columns (`=`) and transformations without a Python interpreter.
 
@@ -126,7 +146,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 ---
 
-## Phase 6: Metasheets, Help System, Terminal Plotting & Extended Loaders
+## Phase 6: Metasheets, Help System, Terminal Plotting & Extended Loaders (v1.0.0)
 
 **Goal:** Complete the VisiData ecosystem experience and integrate deeply with Tamlinux.
 
