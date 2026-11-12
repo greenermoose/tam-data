@@ -5,7 +5,7 @@
 #define _GNU_SOURCE
 #endif
 
-#include "tamdata.h"
+#include "tam-data.h"
 
 #include <signal.h>
 #include <stdarg.h>
@@ -56,7 +56,7 @@ static void td_render_status(td_term_t *t, td_stack_t *stack,
         return;
 
     snprintf(left, sizeof(left), "[%zu/%zu] %s", stack->len, stack->len,
-             s ? s->name : "tamdata");
+             s ? s->name : "tam-data");
     if (s) {
         const char *pending = state && state->pending ? state->pending : "";
 
@@ -297,12 +297,12 @@ td_sheet_t *td_demo_sheet(void)
     return s;
 }
 
-#ifndef TD_TAMDATA_NO_MAIN
+#ifndef TD_TAM_DATA_NO_MAIN
 
 static void td_usage(FILE *out)
 {
     fprintf(out,
-        "usage: tamdata [--demo] [--version|-v] [--help|-h]\n"
+        "usage: tam-data [--demo] [--version|-v] [--help|-h]\n"
         "\n"
         "Phase 0 interactive grid. Open the built-in demo sheet and explore:\n"
         "  h j k l / arrows      move the cursor\n"
@@ -317,7 +317,7 @@ static void td_usage(FILE *out)
         "  # %% $ @ ~             set column type (int, float, currency,\n"
         "                        date, string)\n"
         "  q                     pop the current sheet (quits the last one)\n"
-        "  gq                    quit tamdata\n"
+        "  gq                    quit tam-data\n"
         "  Ctrl+L                full redraw\n");
 }
 
@@ -498,9 +498,9 @@ int main(int argc, char **argv)
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--version") == 0 || strcmp(argv[i], "-v") == 0) {
             if (td_build_id()[0])
-                printf("tamdata %s (%s)\n", td_version(), td_build_id());
+                printf("tam-data %s (%s)\n", td_version(), td_build_id());
             else
-                printf("tamdata %s\n", td_version());
+                printf("tam-data %s\n", td_version());
             return 0;
         }
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -511,7 +511,7 @@ int main(int argc, char **argv)
             demo = true;
             continue;
         }
-        fprintf(stderr, "tamdata: unknown argument: %s\n", argv[i]);
+        fprintf(stderr, "tam-data: unknown argument: %s\n", argv[i]);
         td_usage(stderr);
         return 2;
     }
@@ -519,13 +519,13 @@ int main(int argc, char **argv)
 
     td_sheet_t *sheet = td_demo_sheet();
     if (!sheet || !td_stack_push(&stack, sheet)) {
-        fprintf(stderr, "tamdata: cannot create demo sheet\n");
+        fprintf(stderr, "tam-data: cannot create demo sheet\n");
         td_sheet_free(sheet);
         return 1;
     }
 
     if (td_term_open(&term, getenv("TERM"), td_locale()) != 0) {
-        fprintf(stderr, "tamdata: standard input is not a terminal\n");
+        fprintf(stderr, "tam-data: standard input is not a terminal\n");
         td_stack_free(&stack);
         return 1;
     }
@@ -609,4 +609,4 @@ int main(int argc, char **argv)
     return rc;
 }
 
-#endif /* TD_TAMDATA_NO_MAIN */
+#endif /* TD_TAM_DATA_NO_MAIN */

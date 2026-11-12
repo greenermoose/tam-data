@@ -1,6 +1,6 @@
-# tamdata Roadmap
+# tam-data Roadmap
 
-This document outlines the architectural plan and phased roadmap for `tamdata`: a pure-C, zero-Python rewrite of [VisiData](https://www.visidata.org/) built on the Tam C libraries (`libtam`) and designed to run natively on any Tamlinux system—including bare Linux virtual terminals (`TERM=linux`).
+This document outlines the architectural plan and phased roadmap for `tam-data`: a pure-C, zero-Python rewrite of [VisiData](https://www.visidata.org/) built on the Tam C libraries (`libtam`) and designed to run natively on any Tamlinux system—including bare Linux virtual terminals (`TERM=linux`).
 
 ---
 
@@ -43,7 +43,7 @@ This document outlines the architectural plan and phased roadmap for `tamdata`: 
 
 - [ ] **Streaming & `mmap` CSV/TSV Parser:**
   - RFC 4180 compliant CSV parser (quoted fields, escaped quotes, embedded newlines, configurable delimiters) and fast TSV scanner.
-  - Support reading from file paths and piped `stdin` (`cat data.csv | tamdata`).
+  - Support reading from file paths and piped `stdin` (`cat data.csv | tam-data`).
 - [ ] **Sheet Viewport & Status Bar Renderer:**
   - Dynamic column width calculation with manual override (`_`), column truncation indicators (`…`), and type sigils in headers (`#` int, `%` float, `$` currency, `@` date, `~` string).
   - Pinned key columns (`!`) anchored on the left during horizontal scrolling.
@@ -77,7 +77,7 @@ This document outlines the architectural plan and phased roadmap for `tamdata`: 
 
 ## Phase 3: In-Place Editing, Clipboard, Undo/Redo & Command Log
 
-**Goal:** Turn `tamdata` from an interactive explorer into a full tabular editor with reproducible command logs.
+**Goal:** Turn `tam-data` from an interactive explorer into a full tabular editor with reproducible command logs.
 
 - [ ] **Cell & Bulk Editing:**
   - Inline cell editing (`e`) with history and cursor movement; set value across all selected rows (`ge`).
@@ -134,7 +134,7 @@ This document outlines the architectural plan and phased roadmap for `tamdata`: 
   - **Sheets Sheet (`S` / `gS`):** Inspect, reorder, drop, or join active sheets on the stack.
   - **Columns Sheet (`C` / `gC`):** Edit column names, widths, types, aggregators, and visibility as rows of a metasheet.
   - **Options Sheet (`O`):** View and modify runtime and persistent configuration (stored via `tam_xdg_path` and parsed with `tam_ini`).
-  - **Directory Sheet:** Open a directory path in `tamdata` to inspect files, sizes, permissions, and timestamps as a sortable, filterable table, with `Enter` opening the selected file.
+  - **Directory Sheet:** Open a directory path in `tam-data` to inspect files, sizes, permissions, and timestamps as a sortable, filterable table, with `Enter` opening the selected file.
 - [ ] **Interactive Help & Command Palette (`Ctrl+H`, `Space`):**
   - Searchable command palette (`Space`) and context-sensitive help sheet listing all commands, keybindings, and descriptions.
 - [ ] **VT & Terminal Canvas / Plotting (`.` / `g.`):**

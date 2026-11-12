@@ -1,7 +1,7 @@
 #include <string.h>
 
 #include "sheet.h"
-#include "tamdata.h"
+#include "tam-data.h"
 #include "term.h"
 #include "test.h"
 

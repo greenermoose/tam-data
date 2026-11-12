@@ -6,19 +6,19 @@ This workplan defines the concrete engineering tasks, module boundaries, data st
 
 ## 1. Phase 0 Objective
 
-Deliver a self-contained, warning-free, sanitizer-clean C11 foundation for `tamdata` that:
+Deliver a self-contained, warning-free, sanitizer-clean C11 foundation for `tam-data` that:
 1. Links statically against `libtam` (`>= 0.4.0`) with **zero external shared library dependencies beyond `libc`**.
 2. Provides a double-buffered terminal compositor (`td_term`) that runs cleanly on both bare Linux virtual consoles (`TERM=linux`, `console_codes(4)`) and graphical terminal emulators (`foot`, `xterm-256color`, `tmux-256color`).
 3. Implements the multi-key input state machine (`td_input`) for VisiData prefix chords (`g`, `z`, `gz`), special keys, and bottom-line prompt editing.
 4. Implements the core in-memory tabular data structures (`td_arena_t`, `td_val_t`, `td_col_t`, `td_sheet_t`, `td_stack_t`).
-5. Boots into a minimal interactive `tamdata` shell rendering a grid viewport, column headers with type sigils, cursor navigation, and the VisiData status bar, backed by headless unit tests under `ASan` and `UBSan`.
+5. Boots into a minimal interactive `tam-data` shell rendering a grid viewport, column headers with type sigils, cursor navigation, and the VisiData status bar, backed by headless unit tests under `ASan` and `UBSan`.
 
 ---
 
 ## 2. Target Directory & File Layout
 
 ```text
-~/Code/tamdata/
+~/Code/tam-data/
 ├── Makefile
 ├── README.md
 ├── ROADMAP.md
@@ -36,7 +36,7 @@ Deliver a self-contained, warning-free, sanitizer-clean C11 foundation for `tamd
 │   ├── term.c
 │   ├── input.h         # Escape parser, UTF-8 decoder, prefix chords, line prompt
 │   ├── input.c
-│   └── tamdata.c       # CLI entry point, main event loop, minimal grid & status bar
+│   └── tam-data.c      # CLI entry point, main event loop, minimal grid & status bar
 └── tests/
     ├── test_main.c     # Test runner entry point
     ├── test_arena.c    # Arena allocation, alignment, and reset/free tests
@@ -63,8 +63,8 @@ Deliver a self-contained, warning-free, sanitizer-clean C11 foundation for `tamd
   - Link `libtam.a` statically; require no `ncurses`, `glib`, or Python libraries.
   - Compiler flag tracking via `build/.flags` so changing `CFLAGS` or `PREFIX` triggers a clean rebuild.
 - **Targets:**
-  - `make` / `make all` / `make command`: builds `build/tamdata`.
-  - `make test`: compiles unit tests and `src/` objects with `-fsanitize=address,undefined -fno-omit-frame-pointer -g` into `build/test_tamdata` and runs the suite.
+  - `make` / `make all` / `make command`: builds `build/tam-data`.
+  - `make test`: compiles unit tests and `src/` objects with `-fsanitize=address,undefined -fno-omit-frame-pointer -g` into `build/test_tam-data` and runs the suite.
   - `make install` / `make uninstall` / `make clean`.
 
 ---
@@ -152,17 +152,17 @@ Deliver a self-contained, warning-free, sanitizer-clean C11 foundation for `tamd
 
 ---
 
-### W6: Minimal Interactive Shell & Phase 0 Verification (`src/tamdata.c`, `tests/*`)
+### W6: Minimal Interactive Shell & Phase 0 Verification (`src/tam-data.c`, `tests/*`)
 
-- **Interactive Grid & Status Bar (`src/tamdata.c`):**
+- **Interactive Grid & Status Bar (`src/tam-data.c`):**
   - Renders the active `td_sheet_t` on `td_term_t`:
     - Top row: Column headers with bold highlight on `cursor_col`, key separator (`║` or `|`), and type sigils (`#`, `%`, `$`, `@`, `~`).
     - Body rows: Pinned key columns on the left, horizontally scrolled regular columns on the right, distinct styling for cursor row, cursor cell (reverse video), and selected rows (`s`/`t`).
     - Bottom row: VisiData status bar showing `[sheet_index/total] sheet_name` on the left, transient status/prompt message in the center, and `pending_keys | row_count rows (selected_count selected)` on the right.
   - CLI options:
-    - `tamdata --version` / `tamdata -v`
-    - `tamdata --help` / `tamdata -h`
-    - `tamdata` (or `tamdata --demo`): opens a built-in starter/sample sheet so navigation, column resizing/hiding/renaming/typing, row selection, and VT rendering can be exercised interactively before Phase 1's CSV/TSV file parser lands.
+    - `tam-data --version` / `tam-data -v`
+    - `tam-data --help` / `tam-data -h`
+    - `tam-data` (or `tam-data --demo`): opens a built-in starter/sample sheet so navigation, column resizing/hiding/renaming/typing, row selection, and VT rendering can be exercised interactively before Phase 1's CSV/TSV file parser lands.
 - **Sanitizer Unit Test Suite (`tests/*`):**
   - `test_arena`: block growth, alignment, `strdup`/`strndup`, reset, and free under ASan.
   - `test_val`: integer, float, currency, date, and string parsing, formatting, truncation, and typed comparisons.
@@ -179,14 +179,14 @@ Deliver a self-contained, warning-free, sanitizer-clean C11 foundation for `tamd
 3. **Step 3 (W3):** Implement `src/sheet.*` with `tests/test_sheet.c`.
 4. **Step 4 (W4):** Implement `src/term.*` with headless buffer tests in `tests/test_term.c`.
 5. **Step 5 (W5):** Implement `src/input.*` with byte-stream and prompt tests in `tests/test_input.c`.
-6. **Step 6 (W6):** Implement `src/tamdata.c` tying the event loop, grid renderer, and status bar together; run full `make && make test`.
+6. **Step 6 (W6):** Implement `src/tam-data.c` tying the event loop, grid renderer, and status bar together; run full `make && make test`.
 
 ---
 
 ## 5. Phase 0 Completion Criteria (Exit Gate to Phase 1)
 
-- [ ] `make` builds `build/tamdata` with zero warnings under `-Wall -Wextra -Wpedantic -Werror -std=c11`.
-- [ ] `ldd build/tamdata` shows only standard C runtime libraries (`libc.so`, `ld-linux`), with `libtam.a` statically linked.
+- [ ] `make` builds `build/tam-data` with zero warnings under `-Wall -Wextra -Wpedantic -Werror -std=c11`.
+- [ ] `ldd build/tam-data` shows only standard C runtime libraries (`libc.so`, `ld-linux`), with `libtam.a` statically linked.
 - [ ] `make test` passes 100% of unit tests (`arena`, `val`, `sheet`, `term`, `input`) with AddressSanitizer and UndefinedBehaviorSanitizer enabled and zero memory leaks.
-- [ ] `build/tamdata --version` and `build/tamdata --help` exit `0` with clean output.
-- [ ] Interactive launch (`build/tamdata`) renders the grid, headers, and status bar cleanly in both a graphical terminal (`foot`) and a `TERM=linux` environment, supporting cursor movement (`h`/`j`/`k`/`l`, `gh`/`gj`/`gk`/`gl`, `gg`/`G`), column controls (`!`, `-`, `_`, `^`, `#`/`%`/`$`/`~`), row selection (`s`/`u`/`t`), window resize (`SIGWINCH`), and clean exit (`q`).
+- [ ] `build/tam-data --version` and `build/tam-data --help` exit `0` with clean output.
+- [ ] Interactive launch (`build/tam-data`) renders the grid, headers, and status bar cleanly in both a graphical terminal (`foot`) and a `TERM=linux` environment, supporting cursor movement (`h`/`j`/`k`/`l`, `gh`/`gj`/`gk`/`gl`, `gg`/`G`), column controls (`!`, `-`, `_`, `^`, `#`/`%`/`$`/`~`), row selection (`s`/`u`/`t`), window resize (`SIGWINCH`), and clean exit (`q`).

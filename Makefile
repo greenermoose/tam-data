@@ -1,4 +1,4 @@
-# tamdata - terminal spreadsheet multitool
+# tam-data - terminal spreadsheet multitool
 #
 # Phase 0: strict C11 build linking libtam statically, plus an ASan/UBSan
 # unit-test harness. libtam 0.4.0 or later is discovered with
@@ -40,12 +40,12 @@ TD_BUILD_ID := $(shell git -C $(CURDIR) describe --always --dirty 2>/dev/null)
 CPPFLAGS += -DTD_BUILD_ID=\"$(TD_BUILD_ID)\"
 
 BUILD    := build
-BIN      := $(BUILD)/tamdata
-TEST_BIN := $(BUILD)/test_tamdata
+BIN      := $(BUILD)/tam-data
+TEST_BIN := $(BUILD)/test_tam-data
 
-SRC := src/arena.c src/val.c src/sheet.c src/term.c src/input.c src/tamdata.c
+SRC := src/arena.c src/val.c src/sheet.c src/term.c src/input.c src/tam-data.c
 DEPS := src/version.h src/utf8.h src/arena.h src/val.h src/sheet.h src/term.h \
-        src/input.h src/tamdata.h
+        src/input.h src/tam-data.h
 
 OBJS      := $(SRC:src/%.c=$(BUILD)/obj/%.o)
 TEST_SRCS := tests/test_main.c tests/test_arena.c tests/test_val.c \
@@ -73,7 +73,7 @@ $(BUILD)/.flags: FORCE | $(BUILD)
 
 libtam-check:
 ifneq ($(LIBTAM_ERROR),)
-	@printf '%s\n' 'tamdata: cannot build: $(LIBTAM_ERROR).' \
+	@printf '%s\n' 'tam-data: cannot build: $(LIBTAM_ERROR).' \
 		'  Install libtam 0.4.0 or later first:   make -C <libtam checkout> install PREFIX=<prefix>' \
 		'  then let pkg-config see it:   export PKG_CONFIG_PATH=<prefix>/lib/pkgconfig' \
 		'  or name the prefix:   make LIBTAM_PREFIX=<prefix>' >&2
@@ -88,7 +88,7 @@ $(BIN): $(OBJS) | $(BUILD)
 
 $(BUILD)/test/src/%.o: src/%.c $(DEPS) $(BUILD)/.flags | $(BUILD) libtam-check
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_CFLAGS) $(LIBTAM_CFLAGS) \
-		-DTD_TAMDATA_NO_MAIN -c $< -o $@
+		-DTD_TAM_DATA_NO_MAIN -c $< -o $@
 
 $(BUILD)/test/%.o: tests/%.c tests/test.h $(DEPS) $(BUILD)/.flags | $(BUILD) libtam-check
 	$(CC) $(CPPFLAGS) $(CFLAGS) $(TEST_CFLAGS) $(LIBTAM_CFLAGS) -c $< -o $@
@@ -104,10 +104,10 @@ test: $(TEST_BIN)
 
 install: $(BIN)
 	install -d $(DESTDIR)$(BINDIR)
-	install -m 755 $(BIN) $(DESTDIR)$(BINDIR)/tamdata
+	install -m 755 $(BIN) $(DESTDIR)$(BINDIR)/tam-data
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/tamdata
+	rm -f $(DESTDIR)$(BINDIR)/tam-data
 
 clean:
 	rm -rf $(BUILD)

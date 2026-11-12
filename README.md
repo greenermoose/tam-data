@@ -1,10 +1,10 @@
-# tamdata
+# tam-data
 
-`tamdata` is a terminal spreadsheet multitool written in C, recreating the interactive data exploration and arrangement capabilities of [VisiData](https://www.visidata.org/) with zero Python dependencies.
+`tam-data` is a terminal spreadsheet multitool written in C, recreating the interactive data exploration and arrangement capabilities of [VisiData](https://www.visidata.org/) with zero Python dependencies.
 
 ## Mission & Purpose
 
-`tamdata` provides a fast, standalone, and lightweight tabular data tool that runs on any Tamlinux system—including minimal recovery environments, headless servers, and VT text-only terminals (Linux virtual consoles / serial lines)—without requiring a Python runtime or external language interpreters. It links only against standard C/POSIX libraries and the Tam C libraries (`libtam`).
+`tam-data` provides a fast, standalone, and lightweight tabular data tool that runs on any Tamlinux system—including minimal recovery environments, headless servers, and VT text-only terminals (Linux virtual consoles / serial lines)—without requiring a Python runtime or external language interpreters. It links only against standard C/POSIX libraries and the Tam C libraries (`libtam`).
 
 ## Design Goals
 
@@ -31,7 +31,7 @@ Phase 1 (native CSV/TSV loaders and grid navigation) is next; see
 ## Building
 
 ```sh
-make          # build/tamdata
+make          # build/tam-data
 make test     # unit tests under ASan/UBSan
 make install  # install into $PREFIX (default: ~/.local/dev)
 ```
