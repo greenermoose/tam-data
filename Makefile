@@ -72,7 +72,7 @@ TEST_LDFLAGS ?= -fsanitize=address,undefined
 
 CONFIG := $(CC)|$(CPPFLAGS)|$(CFLAGS)|$(TEST_CFLAGS)|$(TEST_LDFLAGS)|$(LDFLAGS)|$(LDLIBS)|$(LIBTAM_CFLAGS)|$(LIBTAM_LIBS)|$(PREFIX)
 
-.PHONY: all command test install uninstall clean libtam-check FORCE
+.PHONY: all command test smoke install uninstall clean libtam-check FORCE
 
 all: command
 command: $(BIN)
@@ -115,6 +115,9 @@ test: $(TEST_BIN)
 	ASAN_OPTIONS=detect_leaks=1:abort_on_error=1 \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 	./$(TEST_BIN)
+
+smoke: $(BIN)
+	sh tests/smoke.sh $(BIN)
 
 install: $(BIN)
 	install -d $(DESTDIR)$(BINDIR)

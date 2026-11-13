@@ -1554,7 +1554,10 @@ static void td_usage(FILE *out)
         "  ^                     rename the current column\n"
         "  # %% $ @ ~ z~          set column type (int, float, currency,\n"
         "                        date, string, any)\n"
-        "  Ctrl+S                save sheet atomically to CSV/TSV/.vd\n"
+        "  S / gS / C / gC / O   open Sheets, Columns, or Options metasheet\n"
+        "  . / g.                terminal scatter plot / bar chart\n"
+        "  Space / Ctrl+H        open command palette / help sheet\n"
+        "  Ctrl+S                save sheet atomically to CSV/TSV/JSON/JSONL/.vd\n"
         "  q / gq                pop sheet / quit tam-data\n"
         "  Ctrl+L                full redraw\n");
 }
@@ -1856,6 +1859,15 @@ static bool td_replay_exec_cb(td_cmd_t cmd, const char *input, void *ctx,
     return td_exec_action(cmd, input, (td_exec_ctx_t *)ctx, err, err_cap);
 }
 
+static void td_cleanup_early(const char **files, td_options_t *opts,
+                             td_clipboard_t *clip, td_cmdlog_t *cmdlog)
+{
+    free((void *)files);
+    td_options_free(opts);
+    td_clipboard_free(clip);
+    td_cmdlog_free(cmdlog);
+}
+
 int main(int argc, char **argv)
 {
     bool demo = false;
@@ -1892,8 +1904,7 @@ int main(int argc, char **argv)
         files = calloc((size_t)argc, sizeof(*files));
         if (!files) {
             fprintf(stderr, "tam-data: out of memory\n");
-            td_clipboard_free(&clip);
-            td_cmdlog_free(&cmdlog);
+            td_cleanup_early(files, &opts, &clip, &cmdlog);
             return 1;
         }
     }
@@ -1911,16 +1922,12 @@ int main(int argc, char **argv)
                     printf("tam-data %s (%s)\n", td_version(), td_build_id());
                 else
                     printf("tam-data %s\n", td_version());
-                free(files);
-                td_clipboard_free(&clip);
-                td_cmdlog_free(&cmdlog);
+                td_cleanup_early(files, &opts, &clip, &cmdlog);
                 return 0;
             }
             if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
                 td_usage(stdout);
-                free(files);
-                td_clipboard_free(&clip);
-                td_cmdlog_free(&cmdlog);
+                td_cleanup_early(files, &opts, &clip, &cmdlog);
                 return 0;
             }
             if (strcmp(arg, "--demo") == 0) {
@@ -1965,10 +1972,7 @@ int main(int argc, char **argv)
             if (strcmp(arg, "--config") == 0) {
                 if (i + 1 >= argc || !argv[i + 1][0]) {
                     fprintf(stderr, "tam-data: --config requires a file path\n");
-                    free(files);
-                    td_options_free(&opts);
-                    td_clipboard_free(&clip);
-                    td_cmdlog_free(&cmdlog);
+                    td_cleanup_early(files, &opts, &clip, &cmdlog);
                     return 2;
                 }
                 config_path = argv[++i];
@@ -1982,9 +1986,7 @@ int main(int argc, char **argv)
                 if (i + 1 >= argc || !argv[i + 1][0]) {
                     fprintf(stderr, "tam-data: %s requires a script path\n",
                             arg);
-                    free(files);
-                    td_clipboard_free(&clip);
-                    td_cmdlog_free(&cmdlog);
+                    td_cleanup_early(files, &opts, &clip, &cmdlog);
                     return 2;
                 }
                 play_path = argv[++i];
@@ -1993,9 +1995,7 @@ int main(int argc, char **argv)
             if (strncmp(arg, "--play=", 7) == 0) {
                 if (!arg[7]) {
                     fprintf(stderr, "tam-data: --play requires a script path\n");
-                    free(files);
-                    td_clipboard_free(&clip);
-                    td_cmdlog_free(&cmdlog);
+                    td_cleanup_early(files, &opts, &clip, &cmdlog);
                     return 2;
                 }
                 play_path = arg + 7;
@@ -2006,9 +2006,7 @@ int main(int argc, char **argv)
                     !td_parse_delimiter_arg(argv[i + 1], &csv_opts.delimiter)) {
                     fprintf(stderr, "tam-data: %s requires a single-character delimiter\n",
                             arg);
-                    free(files);
-                    td_clipboard_free(&clip);
-                    td_cmdlog_free(&cmdlog);
+                    td_cleanup_early(files, &opts, &clip, &cmdlog);
                     return 2;
                 }
                 i++;
@@ -2018,9 +2016,7 @@ int main(int argc, char **argv)
                 if (!td_parse_delimiter_arg(arg + 12, &csv_opts.delimiter)) {
                     fprintf(stderr, "tam-data: invalid delimiter: %s\n",
                             arg + 12);
-                    free(files);
-                    td_clipboard_free(&clip);
-                    td_cmdlog_free(&cmdlog);
+                    td_cleanup_early(files, &opts, &clip, &cmdlog);
                     return 2;
                 }
                 continue;
@@ -2029,18 +2025,14 @@ int main(int argc, char **argv)
                 if (!td_parse_delimiter_arg(arg + 2, &csv_opts.delimiter)) {
                     fprintf(stderr, "tam-data: invalid delimiter: %s\n",
                             arg + 2);
-                    free(files);
-                    td_clipboard_free(&clip);
-                    td_cmdlog_free(&cmdlog);
+                    td_cleanup_early(files, &opts, &clip, &cmdlog);
                     return 2;
                 }
                 continue;
             }
             fprintf(stderr, "tam-data: unknown argument: %s\n", arg);
             td_usage(stderr);
-            free(files);
-            td_clipboard_free(&clip);
-            td_cmdlog_free(&cmdlog);
+            td_cleanup_early(files, &opts, &clip, &cmdlog);
             return 2;
         }
         files[nfiles++] = arg;
