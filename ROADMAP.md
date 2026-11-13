@@ -14,13 +14,9 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 2. **First-Class Linux VT & Terminal Compatibility:**
    - Direct `termios` and escape-sequence rendering (building on `libtam` and the terminal engine patterns established in `tam`).
    - Graceful adaptation across bare Linux virtual consoles (`TERM=linux`, 8/16 colors, CP437/UTF-8 box drawing) and graphical terminal emulators (`foot`, 256-color/truecolor, synchronized output).
-3. **Fast Startup & Low Memory Footprint (Targets, Unmeasured):**
-   - Aim for a `0–2 ms` startup; the measurement method and cold/warm cache
-     conditions still need to be defined and benchmarked.
-   - Arena-allocated and `mmap`-backed string slices for raw tabular
-     data to reduce per-cell allocation. Both the arena and `mmap`-backed
-     CSV/TSV loader are implemented; large-file loading time and memory use
-     remain unmeasured.
+3. **Fast Startup & Low Memory Footprint (Measured — see [docs/BENCHMARKS.md](docs/BENCHMARKS.md)):**
+   - Primary `0–2 ms` PTY first-frame TUI startup target: `v1.0.0` achieves `0.81–1.01 ms` warm median (`~2.4 ms` cold median via `POSIX_FADV_DONTNEED`) at `~2.7 MiB` RSS.
+   - Arena-allocated and `mmap`-backed string slices for raw tabular data: `1M`-row CSV (`48.5 MiB`) loads in `141.9 ms` (`202.1 MiB` peak RSS), while `1M`-row JSONL (`1037.6 MiB` RSS, `2.07 s`) and `describe_sheet` (`4.46 s`) are tracked as `v1.0.1` / `v1.1.0` optimization targets.
 4. **VisiData Ergonomics & Muscle Memory:**
    - Preserve VisiData's modal keybindings (`g`, `z` prefixes), multi-sheet stack (`S`, `C`, `I`, `F`, `O`), non-destructive exploration, and command discoverability (`Ctrl+H`, `Space`).
 

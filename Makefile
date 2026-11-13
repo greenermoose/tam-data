@@ -47,8 +47,9 @@ TD_BUILD_ID := $(shell git -C $(CURDIR) describe --always --dirty 2>/dev/null)
 CPPFLAGS += -DTD_BUILD_ID=\"$(TD_BUILD_ID)\"
 
 BUILD    := build
-BIN      := $(BUILD)/tam-data
-TEST_BIN := $(BUILD)/test_tam-data
+BIN       := $(BUILD)/tam-data
+TEST_BIN  := $(BUILD)/test_tam-data
+BENCH_BIN := $(BUILD)/bench_tam-data
 
 SRC := src/arena.c src/val.c src/expr.c src/sheet.c src/csv.c src/json.c \
        src/formats.c src/options.c src/metasheets.c src/plot.c src/term.c \
@@ -66,19 +67,21 @@ TEST_SRCS := tests/test_main.c tests/test_arena.c tests/test_val.c \
              tests/test_plot.c tests/test_formats.c
 TEST_OBJS := $(TEST_SRCS:tests/%.c=$(BUILD)/test/%.o) \
              $(SRC:src/%.c=$(BUILD)/test/src/%.o)
+BENCH_OBJS := $(filter-out $(BUILD)/obj/tam-data.o,$(OBJS)) \
+              $(BUILD)/bench_obj/bench_tam_data.o
 
 TEST_CFLAGS  ?= -O1 -g -fsanitize=address,undefined -fno-omit-frame-pointer
 TEST_LDFLAGS ?= -fsanitize=address,undefined
 
 CONFIG := $(CC)|$(CPPFLAGS)|$(CFLAGS)|$(TEST_CFLAGS)|$(TEST_LDFLAGS)|$(LDFLAGS)|$(LDLIBS)|$(LIBTAM_CFLAGS)|$(LIBTAM_LIBS)|$(PREFIX)
 
-.PHONY: all command test smoke install uninstall clean libtam-check FORCE
+.PHONY: all command test smoke bench bench-quick install uninstall clean libtam-check FORCE
 
 all: command
 command: $(BIN)
 
 $(BUILD):
-	mkdir -p $(BUILD)/obj $(BUILD)/test/src
+	mkdir -p $(BUILD)/obj $(BUILD)/test/src $(BUILD)/bench_obj
 
 # Rebuild everything when the compiler, flags or install prefix change, but
 # leave timestamps alone when the configuration is identical.
@@ -118,6 +121,19 @@ test: $(TEST_BIN)
 
 smoke: $(BIN)
 	sh tests/smoke.sh $(BIN)
+
+$(BUILD)/bench_obj/%.o: bench/%.c $(DEPS) $(BUILD)/.flags | $(BUILD) libtam-check
+	@mkdir -p $(BUILD)/bench_obj
+	$(CC) $(CPPFLAGS) $(CFLAGS) $(LIBTAM_CFLAGS) -c $< -o $@
+
+$(BENCH_BIN): $(BENCH_OBJS) | $(BUILD)
+	$(CC) $(BENCH_OBJS) $(LDFLAGS) $(LIBTAM_LIBS) $(LDLIBS) -o $@
+
+bench-quick: $(BIN) $(BENCH_BIN)
+	./$(BENCH_BIN) --quick
+
+bench: $(BIN) $(BENCH_BIN)
+	./$(BENCH_BIN) --full
 
 install: $(BIN)
 	install -d $(DESTDIR)$(BINDIR)
