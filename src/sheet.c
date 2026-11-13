@@ -1577,7 +1577,7 @@ int td_sheet_footer_rows(const td_sheet_t *s, int term_rows)
     int max_aggs = 0;
     int avail;
 
-    if (!s || term_rows < 4)
+    if (!s || term_rows < 5)
         return 0;
     for (size_t c = 0; c < s->ncols; c++) {
         if (s->cols[c].width != 0 && (int)s->cols[c].naggs > max_aggs)
@@ -1585,7 +1585,7 @@ int td_sheet_footer_rows(const td_sheet_t *s, int term_rows)
     }
     if (max_aggs == 0)
         return 0;
-    avail = term_rows - 3; /* header + at least 1 body row + status bar */
+    avail = term_rows - 4; /* header + at least 1 body row + status + hints */
     if (max_aggs > avail)
         max_aggs = avail;
     return max_aggs > 0 ? max_aggs : 0;

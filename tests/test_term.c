@@ -147,15 +147,23 @@ void test_term(void)
     TD_CHECK_INT(td_term_back_cell(&t, 2, 0).ch, 'B');
     TD_CHECK_INT(td_term_back_cell(&t, 2, 11).ch, '4');
 
-    /* Status bar: "[1/1] demo | r1 c1:name" (len 23), center "hello" at 25. */
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 0).ch, '[');
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 1).ch, '1');
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 13).ch, 'r');
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 14).ch, '1');
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 16).ch, 'c');
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 17).ch, '1');
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 19).ch, 'n');
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 25).ch, 'h');
+    /* Status bar (row 8): "[1/1] demo | r1 c1:name" (len 23), center "hello" at 25. */
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 0).ch, '[');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 1).ch, '1');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 13).ch, 'r');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 14).ch, '1');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 16).ch, 'c');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 17).ch, '1');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 19).ch, 'n');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 25).ch, 'h');
+
+    /* Mode/keybindings bar (row 9): "PREFIX g | q:quit-all ..." */
+    TD_CHECK(td_term_back_cell(&t, 9, 0).attr & TD_ATTR_BOLD);
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 0).ch, 'P');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 7).ch, 'g');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 9).ch, '|');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 11).ch, 'q');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 12).ch, ':');
 
     /* Selection styling and cursor-cell reverse video. */
     td_sheet_select_row(s, 0);
@@ -176,9 +184,9 @@ void test_term(void)
     td_view_render(&t, &st, &view);
     TD_CHECK(td_term_back_cell(&t, 0, 7).attr & TD_ATTR_REV);
     TD_CHECK(!(td_term_back_cell(&t, 0, 0).attr & TD_ATTR_REV));
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 14).ch, '2');
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 17).ch, '2');
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 19).ch, 'q');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 14).ch, '2');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 17).ch, '2');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 19).ch, 'q');
     /* Unselected #ERR cell renders red bold "#ERR" left-aligned at x=7. */
     c = td_term_back_cell(&t, 2, 7);
     TD_CHECK_INT(c.ch, '#');
@@ -193,11 +201,11 @@ void test_term(void)
     if (empty) {
         TD_CHECK(td_stack_push(&st, empty));
         td_view_render(&t, &st, &view);
-        TD_CHECK_INT(td_term_back_cell(&t, 9, 1).ch, '2');
-        TD_CHECK_INT(td_term_back_cell(&t, 9, 14).ch, 'r');
-        TD_CHECK_INT(td_term_back_cell(&t, 9, 15).ch, '0');
-        TD_CHECK_INT(td_term_back_cell(&t, 9, 17).ch, 'c');
-        TD_CHECK_INT(td_term_back_cell(&t, 9, 18).ch, '0');
+        TD_CHECK_INT(td_term_back_cell(&t, 8, 1).ch, '2');
+        TD_CHECK_INT(td_term_back_cell(&t, 8, 14).ch, 'r');
+        TD_CHECK_INT(td_term_back_cell(&t, 8, 15).ch, '0');
+        TD_CHECK_INT(td_term_back_cell(&t, 8, 17).ch, 'c');
+        TD_CHECK_INT(td_term_back_cell(&t, 8, 18).ch, '0');
         td_sheet_free(td_stack_pop(&st));
     }
 
@@ -206,17 +214,41 @@ void test_term(void)
     td_sheet_set_col_width(s, 1, 10);
     td_sheet_set_cell(s, 1, 1, td_val_parse(td_slice_from_cstr("7"), TD_TYPE_INT));
     TD_CHECK(td_sheet_set_col_aggs(s, 1, qty_aggs, 2, "test aggs"));
+    TD_CHECK_INT(td_sheet_footer_rows(s, 4), 0);
+    TD_CHECK_INT(td_sheet_footer_rows(s, 5), 1);
     TD_CHECK_INT(td_sheet_footer_rows(s, 10), 2);
     td_view_render(&t, &st, &view);
-    /* Row 7 = first footer (sum=10), Row 8 = second footer (mean=5), Row 9 = status. */
-    TD_CHECK(td_term_back_cell(&t, 7, 11).attr & TD_ATTR_BOLD);
-    TD_CHECK_INT(td_term_back_cell(&t, 7, 11).ch, 's');
-    TD_CHECK_INT(td_term_back_cell(&t, 7, 14).ch, '=');
-    TD_CHECK_INT(td_term_back_cell(&t, 7, 15).ch, '1');
-    TD_CHECK_INT(td_term_back_cell(&t, 7, 16).ch, '0');
-    TD_CHECK_INT(td_term_back_cell(&t, 8, 11).ch, 'm');
-    TD_CHECK_INT(td_term_back_cell(&t, 8, 15).ch, '=');
-    TD_CHECK_INT(td_term_back_cell(&t, 8, 16).ch, '5');
+    /* Row 6 = first footer (sum=10), Row 7 = second footer (mean=5), Row 8 = status, Row 9 = mode/hints. */
+    TD_CHECK(td_term_back_cell(&t, 6, 11).attr & TD_ATTR_BOLD);
+    TD_CHECK_INT(td_term_back_cell(&t, 6, 11).ch, 's');
+    TD_CHECK_INT(td_term_back_cell(&t, 6, 14).ch, '=');
+    TD_CHECK_INT(td_term_back_cell(&t, 6, 15).ch, '1');
+    TD_CHECK_INT(td_term_back_cell(&t, 6, 16).ch, '0');
+    TD_CHECK_INT(td_term_back_cell(&t, 7, 11).ch, 'm');
+    TD_CHECK_INT(td_term_back_cell(&t, 7, 15).ch, '=');
+    TD_CHECK_INT(td_term_back_cell(&t, 7, 16).ch, '5');
+
+    /* Normal, edit, and prompt mode footer bars. */
+    view.pending = "";
+    td_view_render(&t, &st, &view);
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 0).ch, 'N');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 5).ch, 'L');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 7).ch, '|');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 9).ch, 'h');
+
+    view.prompt_active = true;
+    view.prompt_label = "edit cell:";
+    view.prompt_text = "abc";
+    td_view_render(&t, &st, &view);
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 0).ch, 'E');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 3).ch, 'T');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 5).ch, '|');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 7).ch, 'E');
+
+    view.prompt_label = "/";
+    td_view_render(&t, &st, &view);
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 0).ch, 'P');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 5).ch, 'T');
 
     td_term_close(&t);
     td_stack_free(&st);

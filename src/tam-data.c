@@ -44,7 +44,7 @@ static void td_draw_separator(td_term_t *t, int row, int col, bool key)
 static void td_render_status(td_term_t *t, td_stack_t *stack,
                              const td_view_state_t *state)
 {
-    int row = t->rows - 1;
+    int row = t->rows >= 2 ? t->rows - 2 : t->rows - 1;
     int cols = t->cols;
     td_sheet_t *s = td_stack_active(stack);
     char left[256];
@@ -154,6 +154,63 @@ static void td_render_status(td_term_t *t, td_stack_t *stack,
     }
 }
 
+static void td_render_mode_bar(td_term_t *t, const td_view_state_t *state)
+{
+    int row = t->rows - 1;
+    int cols = t->cols;
+    const char *mode = "NORMAL";
+    const char *hints =
+        "hjkl:move  e:edit  s:sel  /:search  U:undo  ^S:save  q:pop  gq:quit";
+    const char *pending = state && state->pending ? state->pending : "";
+    char mode_buf[32];
+    int modew;
+    int x;
+
+    if (row < 1 || cols <= 0)
+        return;
+
+    if (state && state->prompt_active) {
+        const char *lbl = state->prompt_label ? state->prompt_label : "";
+
+        if (strncmp(lbl, "edit", 4) == 0 ||
+            strncmp(lbl, "set selected", 12) == 0)
+            mode = "EDIT";
+        else
+            mode = "PROMPT";
+        hints = "Enter:apply  Esc:cancel  ^U:clear  ^W:del-word  Up/Dn:history";
+    } else if (strcmp(pending, "g") == 0) {
+        mode = "PREFIX g";
+        hints =
+            "q:quit-all  g:top  h/l:ends  e:edit-sel  s/u:sel-all  Esc:cancel";
+    } else if (strcmp(pending, "z") == 0) {
+        mode = "PREFIX z";
+        hints = "d:clear  y/p:cell  a:add-col  +:agg  _:width  Esc:cancel";
+    } else if (strcmp(pending, "gz") == 0) {
+        mode = "PREFIX gz";
+        hints = "d:clear-sel  y:yank-sel-cells  Esc:cancel";
+    } else if (pending[0]) {
+        snprintf(mode_buf, sizeof(mode_buf), "PREFIX %s", pending);
+        mode = mode_buf;
+        hints = "Esc:cancel";
+    }
+
+    td_term_fill_rect(t, row, 0, 1, cols, ' ', TD_COLOR_DEFAULT,
+                      TD_COLOR_DEFAULT, TD_ATTR_NONE);
+    modew = (int)td_utf8_width(mode);
+    if (modew > cols)
+        modew = cols;
+    td_term_put_str(t, row, 0, modew, mode, TD_COLOR_DEFAULT,
+                    TD_COLOR_DEFAULT, TD_ATTR_BOLD);
+    x = modew;
+    if (x + 3 < cols) {
+        td_term_put_str(t, row, x, 3, " | ", TD_COLOR_DEFAULT,
+                        TD_COLOR_DEFAULT, TD_ATTR_DIM);
+        x += 3;
+        td_term_put_str(t, row, x, cols - x, hints, TD_COLOR_DEFAULT,
+                        TD_COLOR_DEFAULT, TD_ATTR_DIM);
+    }
+}
+
 static void td_render_footer(td_term_t *t, const td_sheet_t *s, int start_row,
                              int footer_rows)
 {
@@ -225,12 +282,13 @@ void td_view_render(td_term_t *t, td_stack_t *stack,
 
     td_term_clear_back(t);
     td_render_status(t, stack, state);
-    if (!s || t->rows < 2)
+    td_render_mode_bar(t, state);
+    if (!s || t->rows < 3)
         return;
 
     td_sheet_refresh_col_aggs(s);
     footer_rows = td_sheet_footer_rows(s, t->rows);
-    body_rows = t->rows - 2 - footer_rows;
+    body_rows = t->rows - 3 - footer_rows;
     if (body_rows < 0)
         body_rows = 0;
     x = 0;
@@ -349,7 +407,7 @@ void td_view_render(td_term_t *t, td_stack_t *stack,
     }
 
     if (footer_rows > 0)
-        td_render_footer(t, s, t->rows - 1 - footer_rows, footer_rows);
+        td_render_footer(t, s, t->rows - 2 - footer_rows, footer_rows);
 }
 
 td_sheet_t *td_demo_sheet(void)
@@ -507,9 +565,9 @@ bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
     orig_row = s->cursor_row;
     orig_col = s->cursor_col;
     footer_rows = td_sheet_footer_rows(s, ctx->term ? ctx->term->rows : 24);
-    body_rows = (ctx->term && ctx->term->rows > 2 + footer_rows)
-                    ? (ctx->term->rows - 2 - footer_rows)
-                    : 22;
+    body_rows = (ctx->term && ctx->term->rows > 3 + footer_rows)
+                    ? (ctx->term->rows - 3 - footer_rows)
+                    : 21;
     if (body_rows < 1)
         body_rows = 1;
 
@@ -1817,7 +1875,7 @@ int main(int argc, char **argv)
     while (!quit) {
         td_sheet_t *active = td_stack_active(&stack);
         int footer_rows = td_sheet_footer_rows(active, term.rows);
-        int body_rows = term.rows - 2 - footer_rows;
+        int body_rows = term.rows - 3 - footer_rows;
 
         if (body_rows < 1)
             body_rows = 1;
