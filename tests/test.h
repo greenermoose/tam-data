@@ -53,5 +53,8 @@ void test_input(void);
 void test_clipboard(void);
 void test_cmdlog(void);
 void test_agg(void);
+void test_metasheets(void);
+void test_plot(void);
+void test_formats(void);
 
 #endif /* TD_TEST_H */

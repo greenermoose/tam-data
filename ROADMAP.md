@@ -38,7 +38,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 | **`v0.4.0`** | **Phase 3** | In-place editing, clipboard/yank ring, undo/redo, command replay log | Completed |
 | **`v0.5.0`** | **Phase 4** | Frequency tables (`F`), aggregation summaries (`+`), describe sheet (`I`), pivot/melt, joins | Completed |
 | **`v0.6.0`** | **Phase 5** | Embedded C expression engine (`td_expr`), computed/derived columns | Completed |
-| **`v1.0.0`** | **Phase 6** | Metasheets (`S`/`C`/`O`/Dir), command palette (`Space`/`Ctrl+H`), terminal plotting, extended formats | Planned |
+| **`v1.0.0`** | **Phase 6** | Metasheets (`S`/`C`/`O`/Dir), command palette (`Space`/`Ctrl+H`), terminal plotting, extended formats | Completed |
 
 - **Patch Releases (`x.y.Z`)**: Bug fixes, terminal compatibility adjustments, performance enhancements, and sanitizer fixes without interface changes.
 - **Minor Releases (`0.Y.0`)**: Completion of each major roadmap phase leading up to `v1.0.0`.
@@ -156,14 +156,14 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 **Goal:** Complete the VisiData ecosystem experience and integrate deeply with Tamlinux.
 
-- [ ] **Metasheets:**
+- [x] **Metasheets:**
   - **Sheets Sheet (`S` / `gS`):** Inspect, reorder, drop, or join active sheets on the stack.
   - **Columns Sheet (`C` / `gC`):** Edit column names, widths, types, aggregators, and visibility as rows of a metasheet.
   - **Options Sheet (`O`):** View and modify runtime and persistent configuration (stored via `tam_xdg_path` and parsed with `tam_ini`).
   - **Directory Sheet:** Open a directory path in `tam-data` to inspect files, sizes, permissions, and timestamps as a sortable, filterable table, with `Enter` opening the selected file.
-- [ ] **Interactive Help & Command Palette (`Ctrl+H`, `Space`):**
+- [x] **Interactive Help & Command Palette (`Ctrl+H`, `Space`):**
   - Searchable command palette (`Space`) and context-sensitive help sheet listing all commands, keybindings, and descriptions.
-- [ ] **VT & Terminal Canvas / Plotting (`.` / `g.`):**
+- [x] **VT & Terminal Canvas / Plotting (`.` / `g.`):**
   - Terminal scatter plots and bar charts using Unicode Braille (`U+2800`..`U+28FF`) in graphical/UTF-8 terminals with automatic fallback to ASCII/block characters on bare Linux VTs.
-- [ ] **Additional Zero-Python Format Loaders:**
+- [x] **Additional Zero-Python Format Loaders:**
   - Fixed-width text tables, JSON / JSON Lines (`.json`, `.jsonl`), INI / key-value files (`tam_ini`), and direct process table output via `tam_exec`.

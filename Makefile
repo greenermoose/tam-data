@@ -50,17 +50,20 @@ BUILD    := build
 BIN      := $(BUILD)/tam-data
 TEST_BIN := $(BUILD)/test_tam-data
 
-SRC := src/arena.c src/val.c src/expr.c src/sheet.c src/csv.c src/term.c \
+SRC := src/arena.c src/val.c src/expr.c src/sheet.c src/csv.c src/json.c \
+       src/formats.c src/options.c src/metasheets.c src/plot.c src/term.c \
        src/input.c src/clipboard.c src/cmdlog.c src/agg.c src/tam-data.c
 DEPS := src/version.h src/utf8.h src/arena.h src/val.h src/expr.h src/sheet.h \
-        src/csv.h src/term.h src/input.h src/clipboard.h src/cmdlog.h \
+        src/csv.h src/json.h src/formats.h src/options.h src/metasheets.h \
+        src/plot.h src/term.h src/input.h src/clipboard.h src/cmdlog.h \
         src/agg.h src/tam-data.h
 
 OBJS      := $(SRC:src/%.c=$(BUILD)/obj/%.o)
 TEST_SRCS := tests/test_main.c tests/test_arena.c tests/test_val.c \
              tests/test_expr.c tests/test_sheet.c tests/test_csv.c \
              tests/test_term.c tests/test_input.c tests/test_clipboard.c \
-             tests/test_cmdlog.c tests/test_agg.c
+             tests/test_cmdlog.c tests/test_agg.c tests/test_metasheets.c \
+             tests/test_plot.c tests/test_formats.c
 TEST_OBJS := $(TEST_SRCS:tests/%.c=$(BUILD)/test/%.o) \
              $(SRC:src/%.c=$(BUILD)/test/src/%.o)
 

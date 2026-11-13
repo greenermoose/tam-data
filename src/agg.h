@@ -23,13 +23,6 @@ typedef enum {
 } td_agg_kind_t;
 
 typedef enum {
-    TD_SHEET_DATA = 0,
-    TD_SHEET_FREQ,
-    TD_SHEET_DESCRIBE,
-    TD_SHEET_PIVOT
-} td_sheet_kind_t;
-
-typedef enum {
     TD_JOIN_INNER = 0,
     TD_JOIN_OUTER,
     TD_JOIN_FULL,

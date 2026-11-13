@@ -7,6 +7,7 @@
 
 #include "tam-data.h"
 
+#include <ctype.h>
 #include <errno.h>
 #include <limits.h>
 #include <signal.h>
@@ -18,7 +19,11 @@
 
 #include "agg.h"
 #include "csv.h"
+#include "formats.h"
 #include "input.h"
+#include "json.h"
+#include "metasheets.h"
+#include "plot.h"
 #include "utf8.h"
 #include "version.h"
 
@@ -268,6 +273,77 @@ static void td_render_footer(td_term_t *t, const td_sheet_t *s, int start_row,
     }
 }
 
+static bool td_str_contains_ci(const char *hay, const char *needle)
+{
+    size_t nlen;
+
+    if (!needle || !needle[0])
+        return true;
+    if (!hay)
+        return false;
+    nlen = strlen(needle);
+    for (const char *p = hay; *p; p++) {
+        size_t i = 0;
+
+        while (i < nlen && p[i] &&
+               tolower((unsigned char)p[i]) == tolower((unsigned char)needle[i])) {
+            i++;
+        }
+        if (i == nlen)
+            return true;
+    }
+    return false;
+}
+
+static size_t td_palette_collect(const char *query, size_t *out, size_t max_out)
+{
+    size_t total = td_cmd_count();
+    size_t count = 0;
+
+    for (size_t i = 0; i < total && count < max_out; i++) {
+        const td_cmd_meta_t *m = td_cmd_at(i);
+
+        if (!m || m->cmd == TD_CMD_COMMAND_PALETTE)
+            continue;
+        if (td_str_contains_ci(m->longname, query) ||
+            td_str_contains_ci(m->keystrokes, query) ||
+            td_str_contains_ci(m->description, query)) {
+            out[count++] = i;
+        }
+    }
+    return count;
+}
+
+static void td_render_palette(td_term_t *t, const td_view_state_t *state)
+{
+    size_t idxs[8];
+    size_t n;
+    int top_row;
+
+    if (!t || !state || !state->palette_active || t->rows < 5)
+        return;
+    n = td_palette_collect(state->prompt_text, idxs,
+                           (size_t)(t->rows - 3 < 8 ? t->rows - 3 : 8));
+    if (n == 0)
+        return;
+    top_row = t->rows - 2 - (int)n;
+    for (size_t i = 0; i < n; i++) {
+        const td_cmd_meta_t *m = td_cmd_at(idxs[i]);
+        char line[256];
+        bool sel = (i == state->palette_sel);
+        uint8_t attr = sel ? TD_ATTR_REV | TD_ATTR_BOLD : TD_ATTR_NONE;
+
+        snprintf(line, sizeof(line), " %-8s %-20s %s",
+                 m->keystrokes ? m->keystrokes : "",
+                 m->longname ? m->longname : "",
+                 m->description ? m->description : "");
+        td_term_fill_rect(t, top_row + (int)i, 0, 1, t->cols, ' ',
+                          TD_COLOR_DEFAULT, TD_COLOR_DEFAULT, attr);
+        td_term_put_str(t, top_row + (int)i, 0, t->cols, line,
+                        TD_COLOR_DEFAULT, TD_COLOR_DEFAULT, attr);
+    }
+}
+
 void td_view_render(td_term_t *t, td_stack_t *stack,
                     const td_view_state_t *state)
 {
@@ -283,8 +359,16 @@ void td_view_render(td_term_t *t, td_stack_t *stack,
     td_term_clear_back(t);
     td_render_status(t, stack, state);
     td_render_mode_bar(t, state);
-    if (!s || t->rows < 3)
+    if (!s || t->rows < 3) {
+        td_render_palette(t, state);
         return;
+    }
+
+    if (s->kind == TD_SHEET_PLOT) {
+        td_plot_render(t, s, state, state ? state->braille_plot : true);
+        td_render_palette(t, state);
+        return;
+    }
 
     td_sheet_refresh_col_aggs(s);
     footer_rows = td_sheet_footer_rows(s, t->rows);
@@ -408,6 +492,7 @@ void td_view_render(td_term_t *t, td_stack_t *stack,
 
     if (footer_rows > 0)
         td_render_footer(t, s, t->rows - 2 - footer_rows, footer_rows);
+    td_render_palette(t, state);
 }
 
 td_sheet_t *td_demo_sheet(void)
@@ -575,20 +660,36 @@ bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
     case TD_CMD_NONE:
         return true;
     case TD_CMD_LEFT:
+        if (s->kind == TD_SHEET_PLOT) {
+            td_plot_pan_zoom(s, -1, 0, 1.0, false);
+            break;
+        }
         next = td_sheet_next_visible_col(s, s->cursor_col, -1);
         if (next != SIZE_MAX)
             s->cursor_col = next;
         break;
     case TD_CMD_RIGHT:
+        if (s->kind == TD_SHEET_PLOT) {
+            td_plot_pan_zoom(s, 1, 0, 1.0, false);
+            break;
+        }
         next = td_sheet_next_visible_col(s, s->cursor_col, 1);
         if (next != SIZE_MAX)
             s->cursor_col = next;
         break;
     case TD_CMD_UP:
+        if (s->kind == TD_SHEET_PLOT) {
+            td_plot_pan_zoom(s, 0, 1, 1.0, false);
+            break;
+        }
         if (s->cursor_row > 0)
             s->cursor_row--;
         break;
     case TD_CMD_DOWN:
+        if (s->kind == TD_SHEET_PLOT) {
+            td_plot_pan_zoom(s, 0, -1, 1.0, false);
+            break;
+        }
         if (s->cursor_row + 1 < s->nrows)
             s->cursor_row++;
         break;
@@ -700,11 +801,20 @@ bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
         break;
     case TD_CMD_SAVE_SHEET: {
         char serr[256];
+        td_format_t sfmt;
+        bool saved;
 
         if (!input_arg || !input_arg[0])
             return td_exec_fail(ctx, err, err_cap,
                                 "save cancelled: empty path");
-        if (!td_csv_save_sheet(s, input_arg, '\0', serr, sizeof(serr)))
+        sfmt = td_format_from_path(input_arg);
+        if (sfmt == TD_FMT_JSON)
+            saved = td_json_save_sheet(s, input_arg, false, serr, sizeof(serr));
+        else if (sfmt == TD_FMT_JSONL)
+            saved = td_json_save_sheet(s, input_arg, true, serr, sizeof(serr));
+        else
+            saved = td_csv_save_sheet(s, input_arg, '\0', serr, sizeof(serr));
+        if (!saved)
             return td_exec_fail(ctx, err, err_cap, "save failed: %s", serr);
         td_set_message(ctx->msg, ctx->msg_cap, "saved %zu rows to %s",
                        s->nrows, input_arg);
@@ -844,6 +954,15 @@ bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
     case TD_CMD_DELETE_ROW:
         if (s->nrows == 0 || s->cursor_row >= s->nrows)
             return td_exec_fail(ctx, err, err_cap, "no rows to delete");
+        if (s->kind == TD_SHEET_SHEETS) {
+            char derr[256];
+
+            if (!td_meta_sheets_drop_row(s, ctx->stack, s->cursor_row,
+                                          derr, sizeof(derr)))
+                return td_exec_fail(ctx, err, err_cap, "%s", derr);
+            td_set_message(ctx->msg, ctx->msg_cap, "dropped sheet");
+            break;
+        }
         if (ctx->clip)
             (void)td_clipboard_yank_row(ctx->clip, s, s->cursor_row);
         if (td_sheet_delete_row(s, s->cursor_row))
@@ -913,6 +1032,24 @@ bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
         if (!td_sheet_edit_cell(s, s->cursor_row, s->cursor_col,
                                 input_arg ? input_arg : ""))
             return td_exec_fail(ctx, err, err_cap, "edit failed");
+        if (s->kind == TD_SHEET_COLS) {
+            char cerr[256];
+
+            if (!td_meta_cols_apply_edit(s, ctx->stack, s->cursor_row,
+                                         s->cursor_col, cerr, sizeof(cerr))) {
+                (void)td_sheet_undo(s, NULL, 0);
+                return td_exec_fail(ctx, err, err_cap, "%s", cerr);
+            }
+            td_set_message(ctx->msg, ctx->msg_cap, "updated column");
+        } else if (s->kind == TD_SHEET_OPTIONS && ctx->opts) {
+            char oerr[256];
+
+            if (!td_meta_options_apply_edit(s, ctx->opts, s->cursor_row,
+                                            s->cursor_col, oerr, sizeof(oerr))) {
+                return td_exec_fail(ctx, err, err_cap, "%s", oerr);
+            }
+            td_set_message(ctx->msg, ctx->msg_cap, "saved option");
+        }
         break;
     case TD_CMD_EDIT_SELECTED: {
         size_t n;
@@ -1208,6 +1345,39 @@ bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
     }
     case TD_CMD_DIVE_ROW: {
         char derr[256];
+
+        if (s->kind == TD_SHEET_SHEETS) {
+            (void)td_meta_dive_row(s, ctx->stack, ctx->csv_opts, NULL,
+                                   derr, sizeof(derr));
+            td_set_message(ctx->msg, ctx->msg_cap, "switched sheet");
+            break;
+        }
+        if (s->kind == TD_SHEET_DIR) {
+            td_sheet_t *child = td_meta_dive_row(s, ctx->stack, ctx->csv_opts,
+                                                 NULL, derr, sizeof(derr));
+
+            ok = td_push_derived_sheet(ctx, child, derr, err, err_cap,
+                                       "opened entry");
+            break;
+        }
+        if (s->kind == TD_SHEET_HELP) {
+            int hcmd = 0;
+
+            (void)td_meta_dive_row(s, ctx->stack, ctx->csv_opts, &hcmd,
+                                   derr, sizeof(derr));
+            if (hcmd != 0 && hcmd != TD_CMD_SHOW_HELP &&
+                hcmd != TD_CMD_COMMAND_PALETTE) {
+                const td_cmd_meta_t *cm = td_cmd_meta((td_cmd_t)hcmd);
+
+                if (cm && !cm->takes_input) {
+                    td_sheet_t *popped = td_stack_pop(ctx->stack);
+
+                    td_sheet_free(popped);
+                    return td_exec_action((td_cmd_t)hcmd, NULL, ctx, err, err_cap);
+                }
+            }
+            break;
+        }
         td_sheet_t *child = td_agg_dive_row(s, ctx->stack, derr, sizeof(derr));
 
         ok = td_push_derived_sheet(ctx, child, derr, err, err_cap,
@@ -1268,6 +1438,49 @@ bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
                        added == 1 ? "column" : "columns");
         break;
     }
+    case TD_CMD_SHOW_SHEETS:
+    case TD_CMD_SHOW_ALL_SHEETS: {
+        td_sheet_t *ms = td_meta_sheets_build(ctx->stack,
+                                               cmd == TD_CMD_SHOW_ALL_SHEETS);
+
+        ok = td_push_derived_sheet(ctx, ms, "cannot build sheets metasheet",
+                                   err, err_cap, "sheets metasheet");
+        break;
+    }
+    case TD_CMD_SHOW_COLS:
+    case TD_CMD_SHOW_ALL_COLS: {
+        td_sheet_t *mc = td_meta_cols_build(ctx->stack,
+                                             cmd == TD_CMD_SHOW_ALL_COLS);
+
+        ok = td_push_derived_sheet(ctx, mc, "cannot build columns metasheet",
+                                   err, err_cap, "columns metasheet");
+        break;
+    }
+    case TD_CMD_SHOW_OPTIONS: {
+        td_sheet_t *mo = td_meta_options_build(ctx->opts);
+
+        ok = td_push_derived_sheet(ctx, mo, "cannot build options metasheet",
+                                   err, err_cap, "options metasheet");
+        break;
+    }
+    case TD_CMD_SHOW_HELP: {
+        td_sheet_t *mh = td_meta_help_build();
+
+        ok = td_push_derived_sheet(ctx, mh, "cannot build help sheet",
+                                   err, err_cap, "help");
+        break;
+    }
+    case TD_CMD_COMMAND_PALETTE:
+        break;
+    case TD_CMD_PLOT_COL:
+    case TD_CMD_PLOT_ALL: {
+        char perr[256];
+        td_sheet_t *mp = td_plot_sheet_build(s, cmd == TD_CMD_PLOT_ALL,
+                                             perr, sizeof(perr));
+
+        ok = td_push_derived_sheet(ctx, mp, perr, err, err_cap, "plot");
+        break;
+    }
     case TD_CMD_REDRAW:
         if (ctx->term)
             ctx->term->force_full = true;
@@ -1291,6 +1504,12 @@ static void td_usage(FILE *out)
         "  -d, --delimiter CHAR  explicit field delimiter (use \\t for tab)\n"
         "      --csv             force comma-delimited CSV\n"
         "      --tsv             force tab-delimited TSV\n"
+        "      --json            force JSON loader\n"
+        "      --jsonl           force JSON Lines loader\n"
+        "      --ini             force INI key-value loader\n"
+        "      --fwf             force fixed-width table loader\n"
+        "      --ps              load process table via tam_exec\n"
+        "      --config FILE     override config.ini path\n"
         "      --no-header       treat first row as data (col1, col2, ...)\n"
         "  -p, --play FILE       replay commands from a .vd / .tsv script\n"
         "  -b, --batch           exit after -p replay without opening the TUI\n"
@@ -1541,6 +1760,10 @@ static void td_handle_command(td_cmd_t cmd, td_exec_ctx_t *ctx,
         td_prompt_start_kind(prompt, TD_PROMPT_SPLIT_COL_REGEX,
                              "capture regex:", "");
         return;
+    case TD_CMD_COMMAND_PALETTE:
+        td_prompt_start_kind(prompt, TD_PROMPT_PALETTE,
+                             "command:", "");
+        return;
     default:
         (void)td_exec_action(cmd, NULL, ctx, NULL, 0);
         return;
@@ -1637,9 +1860,13 @@ int main(int argc, char **argv)
 {
     bool demo = false;
     bool batch = false;
+    bool ps_mode = false;
     bool stop_flags = false;
     const char *play_path = NULL;
+    const char *config_path = NULL;
+    td_format_t forced_fmt = TD_FMT_AUTO;
     td_csv_opts_t csv_opts;
+    td_options_t opts;
     const char **files = NULL;
     size_t nfiles = 0;
     td_stack_t stack = { 0 };
@@ -1655,8 +1882,10 @@ int main(int argc, char **argv)
     char err[256] = "";
     bool quit = false;
     int rc = 0;
+    size_t palette_sel = 0;
 
     td_csv_opts_default(&csv_opts);
+    td_options_init(&opts);
     td_clipboard_init(&clip);
     td_cmdlog_init(&cmdlog);
     if (argc > 1) {
@@ -1705,10 +1934,44 @@ int main(int argc, char **argv)
             if (strcmp(arg, "--csv") == 0) {
                 csv_opts.delimiter = ',';
                 csv_opts.strict_tsv = false;
+                forced_fmt = TD_FMT_CSV;
                 continue;
             }
             if (strcmp(arg, "--tsv") == 0) {
                 csv_opts.delimiter = '\t';
+                forced_fmt = TD_FMT_TSV;
+                continue;
+            }
+            if (strcmp(arg, "--json") == 0) {
+                forced_fmt = TD_FMT_JSON;
+                continue;
+            }
+            if (strcmp(arg, "--jsonl") == 0) {
+                forced_fmt = TD_FMT_JSONL;
+                continue;
+            }
+            if (strcmp(arg, "--ini") == 0) {
+                forced_fmt = TD_FMT_INI;
+                continue;
+            }
+            if (strcmp(arg, "--fwf") == 0) {
+                forced_fmt = TD_FMT_FWF;
+                continue;
+            }
+            if (strcmp(arg, "--ps") == 0) {
+                ps_mode = true;
+                continue;
+            }
+            if (strcmp(arg, "--config") == 0) {
+                if (i + 1 >= argc || !argv[i + 1][0]) {
+                    fprintf(stderr, "tam-data: --config requires a file path\n");
+                    free(files);
+                    td_options_free(&opts);
+                    td_clipboard_free(&clip);
+                    td_cmdlog_free(&cmdlog);
+                    return 2;
+                }
+                config_path = argv[++i];
                 continue;
             }
             if (strcmp(arg, "--no-header") == 0) {
@@ -1783,6 +2046,31 @@ int main(int argc, char **argv)
         files[nfiles++] = arg;
     }
 
+    if (!td_options_load(&opts, config_path, err, sizeof(err))) {
+        fprintf(stderr, "tam-data: config warning: %s\n", err);
+        err[0] = '\0';
+    }
+    if (csv_opts.delimiter == '\0' && opts.default_delimiter != '\0')
+        csv_opts.delimiter = opts.default_delimiter;
+    if (!opts.csv_has_header)
+        csv_opts.has_header = false;
+
+    if (ps_mode) {
+        td_sheet_t *sheet = td_ps_load(err, sizeof(err));
+
+        if (!sheet || !td_stack_push(&stack, sheet)) {
+            fprintf(stderr, "tam-data: %s\n",
+                    err[0] ? err : "failed to load process table");
+            td_sheet_free(sheet);
+            td_stack_free(&stack);
+            free(files);
+            td_options_free(&opts);
+            td_clipboard_free(&clip);
+            td_cmdlog_free(&cmdlog);
+            return 1;
+        }
+    }
+
     if (nfiles > 0) {
         for (size_t i = 0; i < nfiles; i++) {
             td_sheet_t *sheet;
@@ -1791,7 +2079,8 @@ int main(int argc, char **argv)
                 sheet = td_csv_load_fd(STDIN_FILENO, "stdin", &csv_opts,
                                        err, sizeof(err));
             } else {
-                sheet = td_csv_load_file(files[i], &csv_opts, err, sizeof(err));
+                sheet = td_load_path(files[i], &csv_opts, forced_fmt,
+                                     err, sizeof(err));
             }
             if (!sheet || !td_stack_push(&stack, sheet)) {
                 fprintf(stderr, "tam-data: %s\n",
@@ -1799,12 +2088,13 @@ int main(int argc, char **argv)
                 td_sheet_free(sheet);
                 td_stack_free(&stack);
                 free(files);
+                td_options_free(&opts);
                 td_clipboard_free(&clip);
                 td_cmdlog_free(&cmdlog);
                 return 1;
             }
         }
-    } else if (!demo && !isatty(STDIN_FILENO)) {
+    } else if (!ps_mode && !demo && !isatty(STDIN_FILENO)) {
         td_sheet_t *sheet = td_csv_load_fd(STDIN_FILENO, "stdin", &csv_opts,
                                            err, sizeof(err));
 
@@ -1813,11 +2103,12 @@ int main(int argc, char **argv)
                     err[0] ? err : "failed to load stdin");
             td_sheet_free(sheet);
             free(files);
+            td_options_free(&opts);
             td_clipboard_free(&clip);
             td_cmdlog_free(&cmdlog);
             return 1;
         }
-    } else {
+    } else if (!ps_mode) {
         td_sheet_t *sheet = td_demo_sheet();
 
         if (!sheet || !td_stack_push(&stack, sheet)) {
@@ -1833,8 +2124,10 @@ int main(int argc, char **argv)
 
     exec_ctx.stack = &stack;
     exec_ctx.clip = &clip;
-    exec_ctx.cmdlog = &cmdlog;
+    exec_ctx.cmdlog = opts.record_cmdlog ? &cmdlog : NULL;
     exec_ctx.term = NULL;
+    exec_ctx.opts = &opts;
+    exec_ctx.csv_opts = &csv_opts;
     exec_ctx.msg = msg;
     exec_ctx.msg_cap = sizeof(msg);
     exec_ctx.quit = &quit;
@@ -1845,6 +2138,7 @@ int main(int argc, char **argv)
             fprintf(stderr, "tam-data: replay failed: %s\n",
                     err[0] ? err : "unknown error");
             td_stack_free(&stack);
+            td_options_free(&opts);
             td_clipboard_free(&clip);
             td_cmdlog_free(&cmdlog);
             return 1;
@@ -1853,6 +2147,7 @@ int main(int argc, char **argv)
 
     if (batch || quit || stack.len == 0) {
         td_stack_free(&stack);
+        td_options_free(&opts);
         td_clipboard_free(&clip);
         td_cmdlog_free(&cmdlog);
         return 0;
@@ -1861,6 +2156,7 @@ int main(int argc, char **argv)
     if (td_term_open(&term, getenv("TERM"), td_locale()) != 0) {
         fprintf(stderr, "tam-data: cannot open controlling terminal\n");
         td_stack_free(&stack);
+        td_options_free(&opts);
         td_clipboard_free(&clip);
         td_cmdlog_free(&cmdlog);
         return 1;
@@ -1888,6 +2184,10 @@ int main(int argc, char **argv)
         view.prompt_label = td_prompt_label(&prompt);
         view.prompt_text = td_prompt_text(&prompt);
         view.prompt_cursor = td_prompt_cursor(&prompt);
+        view.palette_active = prompt.active &&
+                              td_prompt_kind(&prompt) == TD_PROMPT_PALETTE;
+        view.palette_sel = palette_sel;
+        view.braille_plot = opts.braille_plot;
         td_view_render(&term, &stack, &view);
         td_term_present(&term);
         msg[0] = '\0';
@@ -1917,6 +2217,47 @@ int main(int argc, char **argv)
             continue;
 
         if (prompt.active) {
+            if (td_prompt_kind(&prompt) == TD_PROMPT_PALETTE) {
+                size_t idxs[8];
+                size_t n = td_palette_collect(td_prompt_text(&prompt), idxs, 8);
+
+                if (key.kind == TD_KEY_DOWN || key.kind == TD_KEY_TAB) {
+                    if (n > 0)
+                        palette_sel = (palette_sel + 1) % n;
+                    continue;
+                }
+                if (key.kind == TD_KEY_UP || key.kind == TD_KEY_BACKTAB) {
+                    if (n > 0)
+                        palette_sel = (palette_sel == 0) ? (n - 1) : (palette_sel - 1);
+                    continue;
+                }
+                if (key.kind == TD_KEY_ENTER) {
+                    td_cmd_t chosen = TD_CMD_NONE;
+
+                    if (n > 0) {
+                        if (palette_sel >= n)
+                            palette_sel = 0;
+                        chosen = td_cmd_at(idxs[palette_sel])->cmd;
+                    }
+                    td_prompt_stop(&prompt);
+                    palette_sel = 0;
+                    if (chosen != TD_CMD_NONE)
+                        td_handle_command(chosen, &exec_ctx, &prompt);
+                    continue;
+                }
+                {
+                    td_prompt_result_t pr = td_prompt_key(&prompt, key);
+
+                    if (pr == TD_PROMPT_CANCEL) {
+                        td_prompt_stop(&prompt);
+                        palette_sel = 0;
+                        td_set_message(msg, sizeof(msg), "palette cancelled");
+                    } else if (pr == TD_PROMPT_CHANGED) {
+                        palette_sel = 0;
+                    }
+                }
+                continue;
+            }
             td_prompt_result_t pr = td_prompt_key(&prompt, key);
 
             td_handle_prompt_result(pr, &prompt, &exec_ctx);
@@ -1931,6 +2272,7 @@ int main(int argc, char **argv)
     td_term_close(&term);
     td_prompt_free(&prompt);
     td_stack_free(&stack);
+    td_options_free(&opts);
     td_clipboard_free(&clip);
     td_cmdlog_free(&cmdlog);
     return rc;

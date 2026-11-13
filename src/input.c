@@ -313,10 +313,13 @@ static td_cmd_t td_input_single(td_key_t key)
         return TD_CMD_PAGE_DOWN;
     if (key.kind == TD_KEY_ENTER)
         return TD_CMD_DIVE_ROW;
+    if (key.kind == TD_KEY_F1 || key.kind == TD_KEY_BACKSPACE)
+        return TD_CMD_SHOW_HELP;
     if (key.kind != TD_KEY_CHAR)
         return TD_CMD_NONE;
 
     switch (key.ch) {
+    case ' ': return TD_CMD_COMMAND_PALETTE;
     case 'h': return TD_CMD_LEFT;
     case 'j': return TD_CMD_DOWN;
     case 'k': return TD_CMD_UP;
@@ -348,10 +351,14 @@ static td_cmd_t td_input_single(td_key_t key)
     case 'U': return TD_CMD_UNDO;
     case 'R': return TD_CMD_REDO;
     case 'D': return TD_CMD_SHOW_CMDLOG;
+    case 'S': return TD_CMD_SHOW_SHEETS;
+    case 'C': return TD_CMD_SHOW_COLS;
+    case 'O': return TD_CMD_SHOW_OPTIONS;
     case 'F': return TD_CMD_FREQ_COL;
     case 'I': return TD_CMD_DESCRIBE;
     case 'W': return TD_CMD_PIVOT;
     case 'M': return TD_CMD_MELT;
+    case '.': return TD_CMD_PLOT_COL;
     case '+': return TD_CMD_AGGREGATOR;
     case '&': return TD_CMD_JOIN;
     case '=': return TD_CMD_ADD_COL_EXPR;
@@ -428,6 +435,9 @@ td_cmd_t td_input_feed(td_input_t *in, td_key_t key)
         case '_': return TD_CMD_AUTOSIZE_ALL_COLS;
         case 'v': return TD_CMD_UNHIDE_ALL_COLS;
         case 'F': return TD_CMD_FREQ_KEYS;
+        case 'S': return TD_CMD_SHOW_ALL_SHEETS;
+        case 'C': return TD_CMD_SHOW_ALL_COLS;
+        case '.': return TD_CMD_PLOT_ALL;
         case 'z':
             in->prefix = 3;
             return TD_CMD_NONE;

@@ -1132,6 +1132,40 @@ td_sheet_t *td_stack_find_by_id(const td_stack_t *st, uint64_t id)
     return NULL;
 }
 
+bool td_stack_switch_to(td_stack_t *st, uint64_t id)
+{
+    td_sheet_t *target;
+
+    if (!st || st->len == 0 || id == 0)
+        return false;
+    for (size_t i = 0; i < st->len; i++) {
+        if (st->sheets[i] && st->sheets[i]->id == id) {
+            target = st->sheets[i];
+            for (size_t j = i; j + 1 < st->len; j++)
+                st->sheets[j] = st->sheets[j + 1];
+            st->sheets[st->len - 1] = target;
+            return true;
+        }
+    }
+    return false;
+}
+
+bool td_stack_remove_by_id(td_stack_t *st, uint64_t id)
+{
+    if (!st || st->len == 0 || id == 0)
+        return false;
+    for (size_t i = 0; i < st->len; i++) {
+        if (st->sheets[i] && st->sheets[i]->id == id) {
+            td_sheet_free(st->sheets[i]);
+            for (size_t j = i; j + 1 < st->len; j++)
+                st->sheets[j] = st->sheets[j + 1];
+            st->len--;
+            return true;
+        }
+    }
+    return false;
+}
+
 void td_stack_free(td_stack_t *st)
 {
     if (!st)

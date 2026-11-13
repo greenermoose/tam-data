@@ -13,6 +13,7 @@ typedef struct {
     const char *longname;
     const char *keystrokes;
     bool takes_input;
+    const char *description;
 } td_cmd_meta_t;
 
 typedef struct {
@@ -37,6 +38,8 @@ typedef bool (*td_cmd_exec_fn)(td_cmd_t cmd, const char *input, void *ctx,
 
 const td_cmd_meta_t *td_cmd_meta(td_cmd_t cmd);
 td_cmd_t td_cmd_from_longname(const char *longname);
+size_t td_cmd_count(void);
+const td_cmd_meta_t *td_cmd_at(size_t idx);
 
 void td_cmdlog_init(td_cmdlog_t *log);
 void td_cmdlog_free(td_cmdlog_t *log);

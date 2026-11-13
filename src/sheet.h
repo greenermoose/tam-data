@@ -12,6 +12,19 @@
 #define TD_AUTO_WIDTH_MIN 3
 #define TD_MAX_COL_AGGS 12
 
+typedef enum {
+    TD_SHEET_DATA = 0,
+    TD_SHEET_FREQ,
+    TD_SHEET_DESCRIBE,
+    TD_SHEET_PIVOT,
+    TD_SHEET_SHEETS,
+    TD_SHEET_COLS,
+    TD_SHEET_OPTIONS,
+    TD_SHEET_DIR,
+    TD_SHEET_HELP,
+    TD_SHEET_PLOT
+} td_sheet_kind_t;
+
 typedef struct {
     char *name;
     td_type_t type;
@@ -175,6 +188,8 @@ bool td_stack_push(td_stack_t *st, td_sheet_t *s);
 td_sheet_t *td_stack_pop(td_stack_t *st);
 td_sheet_t *td_stack_active(const td_stack_t *st);
 td_sheet_t *td_stack_find_by_id(const td_stack_t *st, uint64_t id);
+bool td_stack_switch_to(td_stack_t *st, uint64_t id);
+bool td_stack_remove_by_id(td_stack_t *st, uint64_t id);
 void td_stack_free(td_stack_t *st);
 
 #endif /* TD_SHEET_H */

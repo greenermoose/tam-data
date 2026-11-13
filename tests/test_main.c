@@ -21,6 +21,9 @@ int main(void)
     test_clipboard();
     test_cmdlog();
     test_agg();
+    test_metasheets();
+    test_plot();
+    test_formats();
 
     if (td_tests_failed) {
         fprintf(stderr, "%d of %d checks failed\n", td_tests_failed,

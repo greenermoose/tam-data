@@ -6,6 +6,8 @@
 
 #include "clipboard.h"
 #include "cmdlog.h"
+#include "csv.h"
+#include "options.h"
 #include "sheet.h"
 #include "term.h"
 
@@ -16,6 +18,9 @@ typedef struct {
     const char *prompt_label;
     const char *prompt_text;
     size_t prompt_cursor;
+    bool palette_active;
+    size_t palette_sel;
+    bool braille_plot;
 } td_view_state_t;
 
 typedef struct {
@@ -23,6 +28,8 @@ typedef struct {
     td_clipboard_t *clip;
     td_cmdlog_t *cmdlog;
     td_term_t *term;
+    td_options_t *opts;
+    const td_csv_opts_t *csv_opts;
     char *msg;
     size_t msg_cap;
     bool *quit;
