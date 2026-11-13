@@ -2,7 +2,7 @@
 
 This document outlines the architectural plan and phased roadmap for `tam-data`: a pure-C, zero-Python rewrite of [VisiData](https://www.visidata.org/) built on the Tam C libraries (`libtam`) and designed to run natively on any Tamlinux system—including bare Linux virtual terminals (`TERM=linux`).
 
-**Current implementation:** v0.2.0 implements CSV/TSV loading (disk files and piped `stdin`), grid navigation, column controls, and atomic CSV/TSV saving alongside the built-in demo. Cell editing, regex search, filtering, sorting, and analytical workflows below are planned. Performance figures in this roadmap are targets; no startup, memory, or file-loading benchmarks have been published for `tam-data`.
+**Current implementation:** v0.3.0 implements CSV/TSV loading (disk files and piped `stdin`), grid navigation, column controls, atomic CSV/TSV saving, POSIX regex row selection and search, row deletion, filtered sheet extraction, and stable typed single/multi-column sorting alongside the built-in demo. In-place cell editing, undo/redo, and analytical workflows below are planned. Performance figures in this roadmap are targets; no startup, memory, or file-loading benchmarks have been published for `tam-data`.
 
 ---
 
@@ -34,7 +34,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 | :--- | :--- | :--- | :--- |
 | **`v0.1.0`** | **Phase 0** | Foundation, build/sanitizers, VT terminal engine, core data model, demo shell | Completed |
 | **`v0.2.0`** | **Phase 1** | Native CSV/TSV parser, viewport rendering, grid navigation, atomic saver (**MVP**) | Completed |
-| **`v0.3.0`** | **Phase 2** | Row selection bitset, regex search, filtering, and typed multi-column sorting | Planned |
+| **`v0.3.0`** | **Phase 2** | Row selection bitset, regex search, filtering, and typed multi-column sorting | Completed |
 | **`v0.4.0`** | **Phase 3** | In-place editing, clipboard/yank ring, undo/redo, command replay log | Planned |
 | **`v0.5.0`** | **Phase 4** | Frequency tables (`F`), aggregation summaries (`+`), describe sheet (`I`), pivot/melt, joins | Planned |
 | **`v0.6.0`** | **Phase 5** | Embedded C expression engine (`td_expr`), computed/derived columns | Planned |
@@ -87,17 +87,17 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 **Goal:** Enable interactive subsetting, regex searching, row selection, and multi-column sorting.
 
-- [ ] **Row Selection Bitset:**
+- [x] **Row Selection Bitset:**
   - Select (`s`), unselect (`u`), and toggle (`t`) current row; select/unselect/toggle all rows (`gs`, `gu`, `gt`).
   - Select/unselect rows matching regex in current column (`|`, `\`) or across all visible columns (`g|`, `g\`).
-- [ ] **Search Engine (`regex.h`):**
-  - Forward (`/`) and backward (`?`) regex/substring search in current column, key columns, or all columns (`g/`, `g?`), with `n`/`N` match stepping.
-- [ ] **Filtering & Sheet Extraction:**
+- [x] **Search Engine (`regex.h`):**
+  - Forward (`/`) and backward (`?`) regex/substring search in current column or all visible columns (`g/`, `g?`), with `n`/`N` match stepping.
+- [x] **Filtering & Sheet Extraction:**
   - Duplicate selected rows into a new pushed sheet (`"`).
   - Delete current row (`d`) or all selected rows (`gd`).
-- [ ] **Typed Sorting:**
+- [x] **Typed Sorting:**
   - Ascending (`[`) and descending (`]`) sort on current column using typed comparators (`int64`, `double`, `date`, `string`).
-  - Multi-column sort (`g[`, `g]`) across key columns or selected column sets.
+  - Multi-column sort (`g[`, `g]`) across pinned key columns (falling back to the current column).
 
 ---
 

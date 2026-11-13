@@ -5,11 +5,12 @@ A terminal spreadsheet multitool written in C, inspired by
 exploration and editing with a small runtime footprint and first-class Linux
 virtual console support, without a Python runtime.
 
-**Early development: the current version, 0.2.0, implements the Phase 1 CSV/TSV MVP.**
+**Early development: the current version, 0.3.0, implements Phase 2 (selection, search, filtering, and sorting) on top of the Phase 1 CSV/TSV MVP.**
 It opens and saves CSV/TSV files, accepts piped `stdin`, and supports grid and
-column navigation. Search, filtering, sorting, and cell editing are the next
-milestones. The long-term ambition is VisiData's core workflows; full feature
-parity is not a current capability.
+column navigation, regex search and selection, row deletion, filtered sheet
+extraction, and typed sorting. In-place cell editing, undo/redo, and analytical
+aggregations are the next milestones. The long-term ambition is VisiData's core
+workflows; full feature parity is not a current capability.
 
 ![tam-data displaying its built-in demo sheet](docs/images/demo.png)
 
@@ -23,17 +24,23 @@ name column, and the row-selection status bar. See
   with `-d`/`--delimiter`, `--csv`, `--tsv`, and `--no-header` options.
 - Grid navigation with arrow keys or `h`/`j`/`k`/`l`, paging, row/column jumps,
   distinct-value jumps (`<`/`>`), and blank-cell jumps (`{`/`}`).
-- Row selection, column hiding/unhiding (`-`/`gv`), reordering (`H`/`L`),
-  renaming (`^`), autosizing/manual width (`_`/`g_`/`z_`), pinning (`!`),
-  and type changes (`#`/`%`/`$`/`@`/`~`/`z~`).
+- Row selection (`s`/`u`/`t`/`gs`/`gu`/`gt`), regex selection (`|`/`\`/`g|`/`g\`),
+  regex search (`/`/`?`/`g/`/`g?`/`n`/`N`), filtered sheet extraction (`"`),
+  row deletion (`d`/`gd`), and stable typed single/multi-column sorting
+  (`[`/`]`/`g[`/`g]`).
+- Column hiding/unhiding (`-`/`gv`), reordering (`H`/`L`), renaming (`^`),
+  autosizing/manual width (`_`/`g_`/`z_`), pinning (`!`), and type changes
+  (`#`/`%`/`$`/`@`/`~`/`z~`).
 - Atomic CSV/TSV saving (`Ctrl+S`) via `tam_fs_write_atomic`.
 - Typed values, sheet-stack infrastructure, a prompt editor, and a terminal
   renderer with Linux console and modern terminal profiles.
 - Strict C11 compilation and an AddressSanitizer/UndefinedBehaviorSanitizer
   test suite.
 
-See [the roadmap](ROADMAP.md) for planned features and
-[the Phase 1 workplan](plans/P1-WORKPLAN.md) for the CSV/TSV MVP specification.
+See [the roadmap](ROADMAP.md) for planned features,
+[the Phase 1 workplan](plans/P1-WORKPLAN.md) for the CSV/TSV MVP specification,
+and [the Phase 2 workplan](plans/P2-WORKPLAN.md) for selection, search,
+filtering, and sorting.
 
 ## Build on Linux
 
@@ -98,6 +105,10 @@ The demo contains eight built-in rows; no input file is required.
 | `gg` / `G` | First / last row |
 | `gh` / `gl` | First / last visible column |
 | `s` / `u` / `t` | Select / unselect / toggle the current row |
+| `\|` / `\\` | Select / unselect rows matching a regex in the current column |
+| `/` / `?` / `n` / `N` | Search forward / backward / next / previous match |
+| `"` / `d` / `gd` | Duplicate selected rows / delete row / delete selected rows |
+| `[` / `]` / `g[` / `g]` | Sort ascending / descending (column or pinned key columns) |
 | `!` | Pin or unpin the current column |
 | `_` / `^` / `-` | Autosize / rename / hide the current column |
 | `q` | Close the sheet and exit |

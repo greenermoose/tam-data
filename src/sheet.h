@@ -34,6 +34,7 @@ typedef struct {
     size_t col_cap;
 
     size_t nrows;
+    size_t phys_nrows;   /* allocated physical rows (0 .. phys_nrows - 1) */
     size_t row_cap;
 
     size_t *row_order;   /* visible index -> physical row index */
@@ -45,6 +46,10 @@ typedef struct {
     size_t cursor_col;
     size_t top_row;
     size_t left_col;
+
+    char *last_search;
+    bool search_all_cols;
+    int search_dir;      /* +1 forward, -1 backward */
 } td_sheet_t;
 
 typedef struct {
@@ -89,6 +94,21 @@ bool td_sheet_jump_value(td_sheet_t *s, int dir);
 bool td_sheet_jump_null(td_sheet_t *s, int dir);
 void td_sheet_ensure_cursor_visible(td_sheet_t *s, int grid_rows,
                                     int grid_cols);
+
+bool td_sheet_select_regex(td_sheet_t *s, const char *pattern, bool all_cols,
+                           bool select, size_t *matched_out, char *err,
+                           size_t err_cap);
+bool td_sheet_search(td_sheet_t *s, const char *pattern, int dir, bool all_cols,
+                     char *err, size_t err_cap);
+bool td_sheet_search_next(td_sheet_t *s, int dir_mult, char *err,
+                          size_t err_cap);
+bool td_sheet_delete_row(td_sheet_t *s, size_t vis_row);
+size_t td_sheet_delete_selected(td_sheet_t *s);
+td_sheet_t *td_sheet_dup_selected(const td_sheet_t *s, const char *suffix);
+bool td_sheet_sort_cols(td_sheet_t *s, const size_t *cols, size_t ncols,
+                        bool desc);
+bool td_sheet_sort_col(td_sheet_t *s, size_t col, bool desc);
+bool td_sheet_sort_keys(td_sheet_t *s, bool desc);
 
 bool td_stack_push(td_stack_t *st, td_sheet_t *s);
 td_sheet_t *td_stack_pop(td_stack_t *st);

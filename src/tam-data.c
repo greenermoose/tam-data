@@ -379,6 +379,11 @@ static void td_usage(FILE *out)
         "  H / L                 move column left / right\n"
         "  s u t                 select / unselect / toggle current row\n"
         "  gs gu gt              select / unselect / toggle all rows\n"
+        "  | \\ g| g\\             select / unselect rows by regex (col / all)\n"
+        "  / ? g/ g? n N         regex search (fwd/bwd, col/all, next/prev)\n"
+        "  \"                     duplicate selected rows into new sheet\n"
+        "  d / gd                delete current row / selected rows\n"
+        "  [ ] / g[ g]           sort asc / desc (current col / key cols)\n"
         "  !                     pin or unpin the current column as a key\n"
         "  - / gv                hide current column / unhide all columns\n"
         "  _ / g_ / z_           autosize column / all columns / set width\n"
@@ -601,13 +606,16 @@ static void td_handle_command(td_cmd_t cmd, td_stack_t *stack, td_term_t *term,
         *quit = true;
         break;
     case TD_CMD_SELECT_ROW:
-        td_sheet_select_row(s, s->cursor_row);
+        if (s->nrows > 0 && s->cursor_row < s->nrows)
+            td_sheet_select_row(s, s->row_order[s->cursor_row]);
         break;
     case TD_CMD_UNSELECT_ROW:
-        td_sheet_unselect_row(s, s->cursor_row);
+        if (s->nrows > 0 && s->cursor_row < s->nrows)
+            td_sheet_unselect_row(s, s->row_order[s->cursor_row]);
         break;
     case TD_CMD_TOGGLE_ROW:
-        td_sheet_toggle_row(s, s->cursor_row);
+        if (s->nrows > 0 && s->cursor_row < s->nrows)
+            td_sheet_toggle_row(s, s->row_order[s->cursor_row]);
         break;
     case TD_CMD_SELECT_ALL:
         td_sheet_select_all(s);
@@ -618,6 +626,119 @@ static void td_handle_command(td_cmd_t cmd, td_stack_t *stack, td_term_t *term,
     case TD_CMD_TOGGLE_ALL:
         td_sheet_toggle_all(s);
         break;
+    case TD_CMD_SELECT_REGEX:
+        td_prompt_start_kind(prompt, TD_PROMPT_SELECT_REGEX,
+                             "select regex:", "");
+        break;
+    case TD_CMD_UNSELECT_REGEX:
+        td_prompt_start_kind(prompt, TD_PROMPT_UNSELECT_REGEX,
+                             "unselect regex:", "");
+        break;
+    case TD_CMD_SELECT_ALL_REGEX:
+        td_prompt_start_kind(prompt, TD_PROMPT_SELECT_ALL_REGEX,
+                             "select all regex:", "");
+        break;
+    case TD_CMD_UNSELECT_ALL_REGEX:
+        td_prompt_start_kind(prompt, TD_PROMPT_UNSELECT_ALL_REGEX,
+                             "unselect all regex:", "");
+        break;
+    case TD_CMD_SEARCH_FWD:
+        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_FWD, "/", "");
+        break;
+    case TD_CMD_SEARCH_BWD:
+        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_BWD, "?", "");
+        break;
+    case TD_CMD_SEARCH_ALL_FWD:
+        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_ALL_FWD, "g/", "");
+        break;
+    case TD_CMD_SEARCH_ALL_BWD:
+        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_ALL_BWD, "g?", "");
+        break;
+    case TD_CMD_SEARCH_NEXT:
+    case TD_CMD_SEARCH_PREV: {
+        char err[256];
+        int dir_mult = cmd == TD_CMD_SEARCH_NEXT ? 1 : -1;
+
+        if (!td_sheet_search_next(s, dir_mult, err, sizeof(err)))
+            td_set_message(msg, msg_cap, "%s", err);
+        break;
+    }
+    case TD_CMD_DUP_SELECTED: {
+        if (s->nselected == 0) {
+            td_set_message(msg, msg_cap, "no rows selected");
+            break;
+        }
+        td_sheet_t *dup = td_sheet_dup_selected(s, "[selected]");
+
+        if (!dup || !td_stack_push(stack, dup)) {
+            td_sheet_free(dup);
+            td_set_message(msg, msg_cap, "duplicate failed: out of memory");
+        } else {
+            td_set_message(msg, msg_cap, "pushed %zu selected %s",
+                           dup->nrows, dup->nrows == 1 ? "row" : "rows");
+        }
+        break;
+    }
+    case TD_CMD_DELETE_ROW:
+        if (s->nrows == 0 || s->cursor_row >= s->nrows) {
+            td_set_message(msg, msg_cap, "no rows to delete");
+        } else if (td_sheet_delete_row(s, s->cursor_row)) {
+            td_set_message(msg, msg_cap, "deleted 1 row");
+        }
+        break;
+    case TD_CMD_DELETE_SELECTED: {
+        if (s->nselected == 0) {
+            td_set_message(msg, msg_cap, "no rows selected");
+        } else {
+            size_t n = td_sheet_delete_selected(s);
+
+            td_set_message(msg, msg_cap, "deleted %zu selected %s", n,
+                           n == 1 ? "row" : "rows");
+        }
+        break;
+    }
+    case TD_CMD_SORT_ASC:
+    case TD_CMD_SORT_DESC: {
+        bool desc = cmd == TD_CMD_SORT_DESC;
+
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            break;
+        if (td_sheet_sort_col(s, s->cursor_col, desc)) {
+            const char *cname = s->cols[s->cursor_col].name
+                                    ? s->cols[s->cursor_col].name
+                                    : "";
+            td_set_message(msg, msg_cap, "sorted %s by %s",
+                           desc ? "descending" : "ascending", cname);
+        }
+        break;
+    }
+    case TD_CMD_SORT_KEYS_ASC:
+    case TD_CMD_SORT_KEYS_DESC: {
+        bool desc = cmd == TD_CMD_SORT_KEYS_DESC;
+        bool has_keys = false;
+
+        if (s->ncols == 0)
+            break;
+        for (size_t c = 0; c < s->ncols; c++) {
+            if (s->cols[c].is_key && s->cols[c].width != 0) {
+                has_keys = true;
+                break;
+            }
+        }
+        if (td_sheet_sort_keys(s, desc)) {
+            if (has_keys) {
+                td_set_message(msg, msg_cap, "sorted %s by key columns",
+                               desc ? "descending" : "ascending");
+            } else {
+                const char *cname = s->cols[s->cursor_col].name
+                                        ? s->cols[s->cursor_col].name
+                                        : "";
+                td_set_message(msg, msg_cap, "sorted %s by %s",
+                               desc ? "descending" : "ascending", cname);
+            }
+        }
+        break;
+    }
     case TD_CMD_REDRAW:
         term->force_full = true;
         break;
@@ -700,6 +821,45 @@ static void td_handle_prompt_result(td_prompt_result_t pr, td_prompt_t *prompt,
             }
             break;
         }
+        case TD_PROMPT_SELECT_REGEX:
+        case TD_PROMPT_UNSELECT_REGEX:
+        case TD_PROMPT_SELECT_ALL_REGEX:
+        case TD_PROMPT_UNSELECT_ALL_REGEX: {
+            bool all_cols = kind == TD_PROMPT_SELECT_ALL_REGEX ||
+                            kind == TD_PROMPT_UNSELECT_ALL_REGEX;
+            bool select = kind == TD_PROMPT_SELECT_REGEX ||
+                          kind == TD_PROMPT_SELECT_ALL_REGEX;
+            size_t matched = 0;
+            char err[256];
+
+            if (!text[0]) {
+                td_set_message(msg, msg_cap, "empty regex");
+            } else if (td_sheet_select_regex(active, text, all_cols, select,
+                                             &matched, err, sizeof(err))) {
+                td_set_message(msg, msg_cap, "%s %zu %s",
+                               select ? "selected" : "unselected",
+                               matched, matched == 1 ? "row" : "rows");
+            } else {
+                td_set_message(msg, msg_cap, "invalid regex: %s", err);
+            }
+            break;
+        }
+        case TD_PROMPT_SEARCH_FWD:
+        case TD_PROMPT_SEARCH_BWD:
+        case TD_PROMPT_SEARCH_ALL_FWD:
+        case TD_PROMPT_SEARCH_ALL_BWD: {
+            int dir = (kind == TD_PROMPT_SEARCH_FWD ||
+                       kind == TD_PROMPT_SEARCH_ALL_FWD)
+                          ? 1
+                          : -1;
+            bool all_cols = kind == TD_PROMPT_SEARCH_ALL_FWD ||
+                            kind == TD_PROMPT_SEARCH_ALL_BWD;
+            char err[256];
+
+            if (!td_sheet_search(active, text, dir, all_cols, err, sizeof(err)))
+                td_set_message(msg, msg_cap, "%s", err);
+            break;
+        }
         case TD_PROMPT_NONE:
             break;
         }
@@ -713,6 +873,16 @@ static void td_handle_prompt_result(td_prompt_result_t pr, td_prompt_t *prompt,
             what = "width cancelled";
         else if (kind == TD_PROMPT_SAVE_SHEET)
             what = "save cancelled";
+        else if (kind == TD_PROMPT_SEARCH_FWD ||
+                 kind == TD_PROMPT_SEARCH_BWD ||
+                 kind == TD_PROMPT_SEARCH_ALL_FWD ||
+                 kind == TD_PROMPT_SEARCH_ALL_BWD)
+            what = "search cancelled";
+        else if (kind == TD_PROMPT_SELECT_REGEX ||
+                 kind == TD_PROMPT_UNSELECT_REGEX ||
+                 kind == TD_PROMPT_SELECT_ALL_REGEX ||
+                 kind == TD_PROMPT_UNSELECT_ALL_REGEX)
+            what = "selection cancelled";
         td_prompt_stop(prompt);
         td_set_message(msg, msg_cap, "%s", what);
     }

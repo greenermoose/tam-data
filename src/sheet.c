@@ -1,5 +1,6 @@
 #include "sheet.h"
 
+#include <regex.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -37,6 +38,7 @@ void td_sheet_free(td_sheet_t *s)
     free(s->cols);
     free(s->row_order);
     free(s->sel_bits);
+    free(s->last_search);
     if (s->mmap_base && s->mmap_len > 0)
         munmap(s->mmap_base, s->mmap_len);
     free(s->buf_base);
@@ -144,31 +146,32 @@ size_t td_sheet_add_col(td_sheet_t *s, const char *name, td_type_t type,
 
 size_t td_sheet_add_row(td_sheet_t *s)
 {
-    size_t row;
+    size_t phys;
 
-    if (!s || !td_sheet_grow_rows(s, s->nrows + 1))
+    if (!s || !td_sheet_grow_rows(s, s->phys_nrows + 1))
         return SIZE_MAX;
 
-    row = s->nrows;
+    phys = s->phys_nrows;
     for (size_t c = 0; c < s->ncols; c++) {
-        s->cols[c].cells[row] = TD_VAL_NULL;
+        s->cols[c].cells[phys] = TD_VAL_NULL;
         s->cols[c].cached_width = 0;
     }
-    s->row_order[row] = row;
+    s->row_order[s->nrows] = phys;
+    s->phys_nrows++;
     s->nrows++;
-    return row;
+    return phys;
 }
 
 td_val_t td_sheet_get_cell(const td_sheet_t *s, size_t row, size_t col)
 {
-    if (!s || row >= s->nrows || col >= s->ncols)
+    if (!s || row >= s->phys_nrows || col >= s->ncols)
         return TD_VAL_NULL;
     return s->cols[col].cells[row];
 }
 
 bool td_sheet_set_cell(td_sheet_t *s, size_t row, size_t col, td_val_t v)
 {
-    if (!s || row >= s->nrows || col >= s->ncols)
+    if (!s || row >= s->phys_nrows || col >= s->ncols)
         return false;
     s->cols[col].cells[row] = v;
     s->cols[col].cached_width = 0;
@@ -177,7 +180,7 @@ bool td_sheet_set_cell(td_sheet_t *s, size_t row, size_t col, td_val_t v)
 
 static bool td_row_valid(const td_sheet_t *s, size_t row)
 {
-    return s && row < s->nrows && s->sel_bits;
+    return s && row < s->phys_nrows && s->sel_bits;
 }
 
 void td_sheet_select_row(td_sheet_t *s, size_t row)
@@ -208,7 +211,7 @@ void td_sheet_toggle_row(td_sheet_t *s, size_t row)
 
 bool td_sheet_is_selected(const td_sheet_t *s, size_t row)
 {
-    if (!s || row >= s->nrows || !s->sel_bits)
+    if (!s || row >= s->phys_nrows || !s->sel_bits)
         return false;
     return (s->sel_bits[row / 64] >> (row % 64)) & 1u;
 }
@@ -217,24 +220,24 @@ void td_sheet_select_all(td_sheet_t *s)
 {
     if (!s)
         return;
-    for (size_t r = 0; r < s->nrows; r++)
-        td_sheet_select_row(s, r);
+    for (size_t vr = 0; vr < s->nrows; vr++)
+        td_sheet_select_row(s, s->row_order ? s->row_order[vr] : vr);
 }
 
 void td_sheet_unselect_all(td_sheet_t *s)
 {
     if (!s)
         return;
-    for (size_t r = 0; r < s->nrows; r++)
-        td_sheet_unselect_row(s, r);
+    for (size_t vr = 0; vr < s->nrows; vr++)
+        td_sheet_unselect_row(s, s->row_order ? s->row_order[vr] : vr);
 }
 
 void td_sheet_toggle_all(td_sheet_t *s)
 {
     if (!s)
         return;
-    for (size_t r = 0; r < s->nrows; r++)
-        td_sheet_toggle_row(s, r);
+    for (size_t vr = 0; vr < s->nrows; vr++)
+        td_sheet_toggle_row(s, s->row_order ? s->row_order[vr] : vr);
 }
 
 size_t td_sheet_next_visible_col(const td_sheet_t *s, size_t col, int dir)
@@ -325,7 +328,10 @@ static int td_compute_col_width(const td_sheet_t *s, size_t col, int cap)
                         : TD_WIDTH_SAMPLE_ROWS;
 
     for (size_t r = 0; r < sample; r++) {
-        int w = td_measure_cell_width(c->cells[r], c->type);
+        size_t phys = s->row_order ? s->row_order[r] : r;
+        int w = phys < s->phys_nrows
+                    ? td_measure_cell_width(c->cells[phys], c->type)
+                    : 0;
 
         if (w > width)
             width = w;
@@ -342,7 +348,7 @@ static int td_compute_col_width(const td_sheet_t *s, size_t col, int cap)
         for (size_t vr = start; vr < end; vr++) {
             size_t phys = s->row_order[vr];
 
-            if (phys < s->nrows) {
+            if (phys < s->phys_nrows) {
                 int w = td_measure_cell_width(c->cells[phys], c->type);
 
                 if (w > width)
@@ -422,7 +428,7 @@ bool td_sheet_set_col_type(td_sheet_t *s, size_t col, td_type_t type)
     if (!s || col >= s->ncols)
         return false;
 
-    for (size_t r = 0; r < s->nrows; r++)
+    for (size_t r = 0; r < s->phys_nrows; r++)
         s->cols[col].cells[r] = td_cell_as_type(s, s->cols[col].cells[r],
                                                 type);
     s->cols[col].type = type;
@@ -766,4 +772,498 @@ void td_stack_free(td_stack_t *st)
     st->sheets = NULL;
     st->len = 0;
     st->cap = 0;
+}
+
+static void td_set_err(char *err, size_t err_cap, const char *msg)
+{
+    if (err && err_cap > 0)
+        snprintf(err, err_cap, "%s", msg ? msg : "");
+}
+
+static void td_invalidate_auto_widths(td_sheet_t *s)
+{
+    for (size_t c = 0; c < s->ncols; c++) {
+        if (s->cols[c].width < 0)
+            s->cols[c].cached_width = 0;
+    }
+}
+
+static bool td_compile_regex(regex_t *re, const char *pattern,
+                             char *err, size_t err_cap)
+{
+    int rc;
+
+    if (!pattern) {
+        td_set_err(err, err_cap, "missing pattern");
+        return false;
+    }
+    rc = regcomp(re, pattern, REG_EXTENDED | REG_NOSUB);
+    if (rc != 0) {
+        if (err && err_cap > 0)
+            regerror(rc, re, err, err_cap);
+        return false;
+    }
+    return true;
+}
+
+static bool td_cell_matches_regex(const td_sheet_t *s, size_t phys,
+                                  size_t col, const regex_t *re)
+{
+    char stack_buf[512];
+    td_val_t v = td_sheet_get_cell(s, phys, col);
+    td_type_t type = s->cols[col].type;
+    size_t n = td_val_format(v, type, stack_buf, sizeof(stack_buf));
+
+    if (n < sizeof(stack_buf))
+        return regexec(re, stack_buf, 0, NULL, 0) == 0;
+
+    char *dyn = malloc(n + 1);
+    bool matched;
+
+    if (!dyn)
+        return false;
+    (void)td_val_format(v, type, dyn, n + 1);
+    matched = regexec(re, dyn, 0, NULL, 0) == 0;
+    free(dyn);
+    return matched;
+}
+
+bool td_sheet_select_regex(td_sheet_t *s, const char *pattern, bool all_cols,
+                           bool select, size_t *matched_out, char *err,
+                           size_t err_cap)
+{
+    regex_t re;
+    size_t matched = 0;
+
+    if (matched_out)
+        *matched_out = 0;
+    if (err && err_cap > 0)
+        err[0] = '\0';
+    if (!s) {
+        td_set_err(err, err_cap, "no active sheet");
+        return false;
+    }
+    if (!td_compile_regex(&re, pattern, err, err_cap))
+        return false;
+
+    if (s->nrows > 0 && s->ncols > 0 &&
+        (all_cols || s->cursor_col < s->ncols)) {
+        for (size_t vr = 0; vr < s->nrows; vr++) {
+            size_t phys = s->row_order ? s->row_order[vr] : vr;
+            bool row_hit = false;
+
+            if (!all_cols) {
+                row_hit = td_cell_matches_regex(s, phys, s->cursor_col, &re);
+            } else {
+                for (size_t c = 0; c < s->ncols; c++) {
+                    if (s->cols[c].width == 0)
+                        continue;
+                    if (td_cell_matches_regex(s, phys, c, &re)) {
+                        row_hit = true;
+                        break;
+                    }
+                }
+            }
+            if (row_hit) {
+                matched++;
+                if (select)
+                    td_sheet_select_row(s, phys);
+                else
+                    td_sheet_unselect_row(s, phys);
+            }
+        }
+    }
+
+    regfree(&re);
+    if (matched_out)
+        *matched_out = matched;
+    return true;
+}
+
+static bool td_sheet_search_scan(td_sheet_t *s, const regex_t *re, int dir,
+                                 bool all_cols)
+{
+    size_t start;
+
+    if (!s || s->nrows == 0 || s->ncols == 0)
+        return false;
+    if (!all_cols && s->cursor_col >= s->ncols)
+        return false;
+
+    start = s->cursor_row < s->nrows ? s->cursor_row : 0;
+    for (size_t step = 1; step <= s->nrows; step++) {
+        size_t offset = step % s->nrows;
+        size_t vr = dir >= 0
+                        ? (start + offset) % s->nrows
+                        : (start + s->nrows - offset) % s->nrows;
+        size_t phys = s->row_order ? s->row_order[vr] : vr;
+
+        if (!all_cols) {
+            if (td_cell_matches_regex(s, phys, s->cursor_col, re)) {
+                s->cursor_row = vr;
+                return true;
+            }
+            continue;
+        }
+
+        if (s->cursor_col < s->ncols && s->cols[s->cursor_col].width != 0 &&
+            td_cell_matches_regex(s, phys, s->cursor_col, re)) {
+            s->cursor_row = vr;
+            return true;
+        }
+        for (size_t c = 0; c < s->ncols; c++) {
+            if (s->cols[c].width == 0 || c == s->cursor_col)
+                continue;
+            if (td_cell_matches_regex(s, phys, c, re)) {
+                s->cursor_row = vr;
+                s->cursor_col = c;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool td_sheet_search(td_sheet_t *s, const char *pattern, int dir, bool all_cols,
+                     char *err, size_t err_cap)
+{
+    regex_t re;
+    const char *pat;
+    char *saved;
+    bool hit;
+
+    if (err && err_cap > 0)
+        err[0] = '\0';
+    if (!s) {
+        td_set_err(err, err_cap, "no active sheet");
+        return false;
+    }
+
+    if (pattern && pattern[0]) {
+        pat = pattern;
+    } else if (s->last_search && s->last_search[0]) {
+        pat = s->last_search;
+    } else {
+        td_set_err(err, err_cap, "no previous search");
+        return false;
+    }
+
+    if (!td_compile_regex(&re, pat, err, err_cap))
+        return false;
+
+    if (pat != s->last_search) {
+        size_t len = strlen(pat);
+
+        saved = malloc(len + 1);
+        if (!saved) {
+            regfree(&re);
+            td_set_err(err, err_cap, "out of memory");
+            return false;
+        }
+        memcpy(saved, pat, len + 1);
+        free(s->last_search);
+        s->last_search = saved;
+    }
+    s->search_dir = dir >= 0 ? 1 : -1;
+    s->search_all_cols = all_cols;
+
+    hit = td_sheet_search_scan(s, &re, s->search_dir, all_cols);
+    regfree(&re);
+    if (!hit && err && err_cap > 0)
+        snprintf(err, err_cap, "not found: %s", s->last_search);
+    return hit;
+}
+
+bool td_sheet_search_next(td_sheet_t *s, int dir_mult, char *err,
+                          size_t err_cap)
+{
+    regex_t re;
+    int eff_dir;
+    bool hit;
+
+    if (err && err_cap > 0)
+        err[0] = '\0';
+    if (!s || !s->last_search || !s->last_search[0]) {
+        td_set_err(err, err_cap, "no previous search");
+        return false;
+    }
+    if (!td_compile_regex(&re, s->last_search, err, err_cap))
+        return false;
+
+    eff_dir = (s->search_dir >= 0 ? 1 : -1) * (dir_mult >= 0 ? 1 : -1);
+    hit = td_sheet_search_scan(s, &re, eff_dir, s->search_all_cols);
+    regfree(&re);
+    if (!hit && err && err_cap > 0)
+        snprintf(err, err_cap, "not found: %s", s->last_search);
+    return hit;
+}
+
+static void td_clamp_cursor_after_delete(td_sheet_t *s)
+{
+    if (s->nrows == 0) {
+        s->cursor_row = 0;
+        s->top_row = 0;
+    } else if (s->cursor_row >= s->nrows) {
+        s->cursor_row = s->nrows - 1;
+    }
+}
+
+bool td_sheet_delete_row(td_sheet_t *s, size_t vis_row)
+{
+    size_t phys;
+
+    if (!s || vis_row >= s->nrows || !s->row_order)
+        return false;
+
+    phys = s->row_order[vis_row];
+    td_sheet_unselect_row(s, phys);
+    if (vis_row + 1 < s->nrows)
+        memmove(&s->row_order[vis_row], &s->row_order[vis_row + 1],
+                (s->nrows - vis_row - 1) * sizeof(s->row_order[0]));
+    s->nrows--;
+    td_clamp_cursor_after_delete(s);
+    td_invalidate_auto_widths(s);
+    return true;
+}
+
+size_t td_sheet_delete_selected(td_sheet_t *s)
+{
+    size_t write = 0;
+    size_t deleted = 0;
+
+    if (!s || s->nrows == 0 || s->nselected == 0 || !s->row_order)
+        return 0;
+
+    for (size_t vr = 0; vr < s->nrows; vr++) {
+        size_t phys = s->row_order[vr];
+
+        if (td_sheet_is_selected(s, phys)) {
+            td_sheet_unselect_row(s, phys);
+            deleted++;
+        } else {
+            s->row_order[write++] = phys;
+        }
+    }
+    s->nrows = write;
+    if (deleted > 0) {
+        td_clamp_cursor_after_delete(s);
+        td_invalidate_auto_widths(s);
+    }
+    return deleted;
+}
+
+static td_val_t td_clone_val_to_arena(td_arena_t *arena, td_val_t v, bool *ok)
+{
+    *ok = true;
+    if ((v.type == TD_TYPE_ANY || v.type == TD_TYPE_STR ||
+         v.type == TD_TYPE_ERR) && v.as.s.data) {
+        char *copy = td_arena_strndup(arena, v.as.s.data, v.as.s.len);
+
+        if (!copy) {
+            *ok = false;
+            return TD_VAL_ERR;
+        }
+        v.as.s.data = copy;
+    }
+    return v;
+}
+
+td_sheet_t *td_sheet_dup_selected(const td_sheet_t *s, const char *suffix)
+{
+    const char *base;
+    const char *sfx;
+    size_t name_len;
+    char *name_buf;
+    td_sheet_t *dup;
+
+    if (!s || s->nselected == 0)
+        return NULL;
+
+    base = s->name ? s->name : "";
+    sfx = suffix ? suffix : "[selected]";
+    name_len = strlen(base) + strlen(sfx) + 1;
+    name_buf = malloc(name_len);
+    if (!name_buf)
+        return NULL;
+    snprintf(name_buf, name_len, "%s%s", base, sfx);
+
+    dup = td_sheet_new(name_buf, s->source_path);
+    free(name_buf);
+    if (!dup)
+        return NULL;
+
+    for (size_t c = 0; c < s->ncols; c++) {
+        size_t idx = td_sheet_add_col(dup, s->cols[c].name, s->cols[c].type,
+                                      s->cols[c].width);
+        if (idx == SIZE_MAX) {
+            td_sheet_free(dup);
+            return NULL;
+        }
+        dup->cols[idx].is_key = s->cols[c].is_key;
+    }
+
+    for (size_t vr = 0; vr < s->nrows; vr++) {
+        size_t phys = s->row_order ? s->row_order[vr] : vr;
+        size_t dst_row;
+
+        if (!td_sheet_is_selected(s, phys))
+            continue;
+        dst_row = td_sheet_add_row(dup);
+        if (dst_row == SIZE_MAX) {
+            td_sheet_free(dup);
+            return NULL;
+        }
+        for (size_t c = 0; c < s->ncols; c++) {
+            bool ok = true;
+            td_val_t v = td_clone_val_to_arena(&dup->arena,
+                                               td_sheet_get_cell(s, phys, c),
+                                               &ok);
+            if (!ok || !td_sheet_set_cell(dup, dst_row, c, v)) {
+                td_sheet_free(dup);
+                return NULL;
+            }
+        }
+    }
+
+    if (dup->ncols > 0 && s->cursor_col < dup->ncols)
+        dup->cursor_col = s->cursor_col;
+    return dup;
+}
+
+typedef struct {
+    const td_sheet_t *sheet;
+    const size_t *cols;
+    size_t ncols;
+    bool desc;
+} td_sort_ctx_t;
+
+static td_val_t td_sheet_eval_phys_cell(const td_sheet_t *s, size_t phys,
+                                        size_t col)
+{
+    td_val_t v = td_sheet_get_cell(s, phys, col);
+    td_type_t type = s->cols[col].type;
+
+    if (v.type == TD_TYPE_ANY && type != TD_TYPE_ANY)
+        v = td_val_parse(v.as.s, type);
+    return v;
+}
+
+static int td_sort_cmp(const td_sort_ctx_t *ctx, size_t phys_a, size_t phys_b)
+{
+    const td_sheet_t *s = ctx->sheet;
+
+    for (size_t k = 0; k < ctx->ncols; k++) {
+        size_t col = ctx->cols[k];
+        td_val_t va;
+        td_val_t vb;
+        int cmp;
+
+        if (col >= s->ncols)
+            continue;
+        va = td_sheet_eval_phys_cell(s, phys_a, col);
+        vb = td_sheet_eval_phys_cell(s, phys_b, col);
+        cmp = td_val_cmp(va, vb);
+        if (cmp != 0)
+            return ctx->desc ? -cmp : cmp;
+    }
+    return 0;
+}
+
+static void td_merge_runs(size_t *dst, const size_t *src, size_t left,
+                          size_t mid, size_t right, const td_sort_ctx_t *ctx)
+{
+    size_t i = left;
+    size_t j = mid;
+    size_t k = left;
+
+    while (i < mid && j < right) {
+        if (td_sort_cmp(ctx, src[i], src[j]) <= 0)
+            dst[k++] = src[i++];
+        else
+            dst[k++] = src[j++];
+    }
+    while (i < mid)
+        dst[k++] = src[i++];
+    while (j < right)
+        dst[k++] = src[j++];
+}
+
+bool td_sheet_sort_cols(td_sheet_t *s, const size_t *cols, size_t ncols,
+                        bool desc)
+{
+    td_sort_ctx_t ctx;
+    size_t *scratch;
+
+    if (!s || !cols || ncols == 0 || s->ncols == 0)
+        return false;
+    for (size_t i = 0; i < ncols; i++) {
+        if (cols[i] >= s->ncols)
+            return false;
+    }
+    if (s->nrows <= 1 || !s->row_order)
+        return true;
+
+    scratch = malloc(s->nrows * sizeof(*scratch));
+    if (!scratch)
+        return false;
+
+    ctx.sheet = s;
+    ctx.cols = cols;
+    ctx.ncols = ncols;
+    ctx.desc = desc;
+
+    for (size_t width = 1; width < s->nrows; width *= 2) {
+        for (size_t left = 0; left < s->nrows; left += 2 * width) {
+            size_t mid = left + width;
+            size_t right = left + 2 * width;
+
+            if (mid > s->nrows)
+                mid = s->nrows;
+            if (right > s->nrows)
+                right = s->nrows;
+            td_merge_runs(scratch, s->row_order, left, mid, right, &ctx);
+        }
+        memcpy(s->row_order, scratch, s->nrows * sizeof(*scratch));
+    }
+
+    free(scratch);
+    td_invalidate_auto_widths(s);
+    return true;
+}
+
+bool td_sheet_sort_col(td_sheet_t *s, size_t col, bool desc)
+{
+    return td_sheet_sort_cols(s, &col, 1, desc);
+}
+
+bool td_sheet_sort_keys(td_sheet_t *s, bool desc)
+{
+    size_t small[32];
+    size_t *keys = small;
+    size_t nkeys = 0;
+    bool ok;
+
+    if (!s || s->ncols == 0)
+        return false;
+
+    if (s->ncols > sizeof(small) / sizeof(small[0])) {
+        keys = malloc(s->ncols * sizeof(*keys));
+        if (!keys)
+            return false;
+    }
+
+    for (size_t c = 0; c < s->ncols; c++) {
+        if (s->cols[c].is_key && s->cols[c].width != 0)
+            keys[nkeys++] = c;
+    }
+
+    if (nkeys == 0) {
+        if (s->cursor_col < s->ncols)
+            keys[nkeys++] = s->cursor_col;
+    }
+
+    ok = nkeys > 0 && td_sheet_sort_cols(s, keys, nkeys, desc);
+    if (keys != small)
+        free(keys);
+    return ok;
 }

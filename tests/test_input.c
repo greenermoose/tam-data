@@ -210,5 +210,50 @@ void test_input(void)
     td_prompt_stop(&p);
     TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_NONE);
 
+    /* Phase 2 chords and prompt kinds. */
+    TD_CHECK_INT(td_input_feed(&in, key_char('|')), TD_CMD_SELECT_REGEX);
+    TD_CHECK_INT(td_input_feed(&in, key_char('\\')), TD_CMD_UNSELECT_REGEX);
+    TD_CHECK_INT(td_input_feed(&in, key_char('/')), TD_CMD_SEARCH_FWD);
+    TD_CHECK_INT(td_input_feed(&in, key_char('?')), TD_CMD_SEARCH_BWD);
+    TD_CHECK_INT(td_input_feed(&in, key_char('n')), TD_CMD_SEARCH_NEXT);
+    TD_CHECK_INT(td_input_feed(&in, key_char('N')), TD_CMD_SEARCH_PREV);
+    TD_CHECK_INT(td_input_feed(&in, key_char('"')), TD_CMD_DUP_SELECTED);
+    TD_CHECK_INT(td_input_feed(&in, key_char('d')), TD_CMD_DELETE_ROW);
+    TD_CHECK_INT(td_input_feed(&in, key_char('[')), TD_CMD_SORT_ASC);
+    TD_CHECK_INT(td_input_feed(&in, key_char(']')), TD_CMD_SORT_DESC);
+
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('|')), TD_CMD_SELECT_ALL_REGEX);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('\\')), TD_CMD_UNSELECT_ALL_REGEX);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('/')), TD_CMD_SEARCH_ALL_FWD);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('?')), TD_CMD_SEARCH_ALL_BWD);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('d')), TD_CMD_DELETE_SELECTED);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('[')), TD_CMD_SORT_KEYS_ASC);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char(']')), TD_CMD_SORT_KEYS_DESC);
+
+    td_prompt_start_kind(&p, TD_PROMPT_SELECT_REGEX, "select regex:", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SELECT_REGEX);
+    td_prompt_start_kind(&p, TD_PROMPT_UNSELECT_REGEX, "unselect regex:", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_UNSELECT_REGEX);
+    td_prompt_start_kind(&p, TD_PROMPT_SELECT_ALL_REGEX, "select all regex:", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SELECT_ALL_REGEX);
+    td_prompt_start_kind(&p, TD_PROMPT_UNSELECT_ALL_REGEX, "unselect all regex:", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_UNSELECT_ALL_REGEX);
+    td_prompt_start_kind(&p, TD_PROMPT_SEARCH_FWD, "/", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SEARCH_FWD);
+    td_prompt_start_kind(&p, TD_PROMPT_SEARCH_BWD, "?", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SEARCH_BWD);
+    td_prompt_start_kind(&p, TD_PROMPT_SEARCH_ALL_FWD, "g/", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SEARCH_ALL_FWD);
+    td_prompt_start_kind(&p, TD_PROMPT_SEARCH_ALL_BWD, "g?", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SEARCH_ALL_BWD);
+    td_prompt_stop(&p);
+
     td_prompt_free(&p);
 }

@@ -330,6 +330,16 @@ static td_cmd_t td_input_single(td_key_t key)
     case 's': return TD_CMD_SELECT_ROW;
     case 'u': return TD_CMD_UNSELECT_ROW;
     case 't': return TD_CMD_TOGGLE_ROW;
+    case '|': return TD_CMD_SELECT_REGEX;
+    case '\\': return TD_CMD_UNSELECT_REGEX;
+    case '/': return TD_CMD_SEARCH_FWD;
+    case '?': return TD_CMD_SEARCH_BWD;
+    case 'n': return TD_CMD_SEARCH_NEXT;
+    case 'N': return TD_CMD_SEARCH_PREV;
+    case '"': return TD_CMD_DUP_SELECTED;
+    case 'd': return TD_CMD_DELETE_ROW;
+    case '[': return TD_CMD_SORT_ASC;
+    case ']': return TD_CMD_SORT_DESC;
     case '-': return TD_CMD_HIDE_COL;
     case '!': return TD_CMD_TOGGLE_KEY_COL;
     case '_': return TD_CMD_AUTOSIZE_COL;
@@ -384,6 +394,13 @@ td_cmd_t td_input_feed(td_input_t *in, td_key_t key)
         case 's': return TD_CMD_SELECT_ALL;
         case 'u': return TD_CMD_UNSELECT_ALL;
         case 't': return TD_CMD_TOGGLE_ALL;
+        case '|': return TD_CMD_SELECT_ALL_REGEX;
+        case '\\': return TD_CMD_UNSELECT_ALL_REGEX;
+        case '/': return TD_CMD_SEARCH_ALL_FWD;
+        case '?': return TD_CMD_SEARCH_ALL_BWD;
+        case 'd': return TD_CMD_DELETE_SELECTED;
+        case '[': return TD_CMD_SORT_KEYS_ASC;
+        case ']': return TD_CMD_SORT_KEYS_DESC;
         case '_': return TD_CMD_AUTOSIZE_ALL_COLS;
         case 'v': return TD_CMD_UNHIDE_ALL_COLS;
         case 'z':

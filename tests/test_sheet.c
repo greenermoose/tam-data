@@ -1,3 +1,4 @@
+#include <stdlib.h>
 #include <string.h>
 
 #include "sheet.h"
@@ -114,6 +115,214 @@ static void test_sheet_phase1_nav_and_cols(void)
     TD_CHECK_INT(s->cols[2].width, 50);
 
     td_sheet_free(s);
+}
+
+static void test_sheet_phase2_select_search_filter_sort(void)
+{
+    td_sheet_t *s = td_sheet_new("p2", "/tmp/p2.csv");
+    char err[128] = "";
+    size_t matched = 0;
+
+    TD_CHECK(s != NULL);
+    if (!s)
+        return;
+
+    /* Put backing buffer on s->buf_base to verify child sheet independence. */
+    static const char raw_data[] = "alpha\0beta\0gamma\0alpha\0delta\0";
+    s->buf_base = malloc(sizeof(raw_data));
+    TD_CHECK(s->buf_base != NULL);
+    if (!s->buf_base) {
+        td_sheet_free(s);
+        return;
+    }
+    memcpy(s->buf_base, raw_data, sizeof(raw_data));
+    s->buf_len = sizeof(raw_data);
+
+    td_sheet_add_col(s, "dept", TD_TYPE_STR, -20);
+    td_sheet_add_col(s, "name", TD_TYPE_STR, -20);
+    td_sheet_add_col(s, "score", TD_TYPE_INT, -10);
+    td_sheet_add_col(s, "secret", TD_TYPE_STR, 0); /* hidden */
+
+    for (int i = 0; i < 5; i++)
+        TD_CHECK_INT(td_sheet_add_row(s), (size_t)i);
+
+    /* Rows:
+     * 0: eng,   alpha, 20, hidden_hit
+     * 1: sales, beta,  10, ok
+     * 2: eng,   gamma, NULL, ok
+     * 3: eng,   alpha, 5,  ok
+     * 4: ops,   delta, 30, ok
+     */
+    td_sheet_set_cell(s, 0, 0, td_val_parse(td_slice_from_cstr("eng"), TD_TYPE_STR));
+    td_sheet_set_cell(s, 0, 1, td_val_parse((td_slice_t){ s->buf_base + 0, 5 }, TD_TYPE_STR));
+    td_sheet_set_cell(s, 0, 2, td_val_parse(td_slice_from_cstr("20"), TD_TYPE_INT));
+    td_sheet_set_cell(s, 0, 3, td_val_parse(td_slice_from_cstr("hidden_hit"), TD_TYPE_STR));
+
+    td_sheet_set_cell(s, 1, 0, td_val_parse(td_slice_from_cstr("sales"), TD_TYPE_STR));
+    td_sheet_set_cell(s, 1, 1, td_val_parse((td_slice_t){ s->buf_base + 6, 4 }, TD_TYPE_STR));
+    td_sheet_set_cell(s, 1, 2, td_val_parse(td_slice_from_cstr("10"), TD_TYPE_INT));
+    td_sheet_set_cell(s, 1, 3, td_val_parse(td_slice_from_cstr("ok"), TD_TYPE_STR));
+
+    td_sheet_set_cell(s, 2, 0, td_val_parse(td_slice_from_cstr("eng"), TD_TYPE_STR));
+    td_sheet_set_cell(s, 2, 1, td_val_parse((td_slice_t){ s->buf_base + 11, 5 }, TD_TYPE_STR));
+    /* row 2 col 2 stays NULL */
+    td_sheet_set_cell(s, 2, 3, td_val_parse(td_slice_from_cstr("ok"), TD_TYPE_STR));
+
+    td_sheet_set_cell(s, 3, 0, td_val_parse(td_slice_from_cstr("eng"), TD_TYPE_STR));
+    td_sheet_set_cell(s, 3, 1, td_val_parse((td_slice_t){ s->buf_base + 17, 5 }, TD_TYPE_STR));
+    td_sheet_set_cell(s, 3, 2, td_val_parse(td_slice_from_cstr("5"), TD_TYPE_INT));
+    td_sheet_set_cell(s, 3, 3, td_val_parse(td_slice_from_cstr("ok"), TD_TYPE_STR));
+
+    td_sheet_set_cell(s, 4, 0, td_val_parse(td_slice_from_cstr("ops"), TD_TYPE_STR));
+    td_sheet_set_cell(s, 4, 1, td_val_parse((td_slice_t){ s->buf_base + 23, 5 }, TD_TYPE_STR));
+    td_sheet_set_cell(s, 4, 2, td_val_parse(td_slice_from_cstr("30"), TD_TYPE_INT));
+    td_sheet_set_cell(s, 4, 3, td_val_parse(td_slice_from_cstr("ok"), TD_TYPE_STR));
+
+    /* Duplicating with 0 selected returns NULL (UI warns). */
+    TD_CHECK(td_sheet_dup_selected(s, "[selected]") == NULL);
+
+    /* Regex selection in current column (| and \). */
+    s->cursor_col = 0;
+    TD_CHECK(td_sheet_select_regex(s, "^eng$", false, true, &matched, err, sizeof(err)));
+    TD_CHECK_INT(matched, 3);
+    TD_CHECK_INT(s->nselected, 3);
+    s->cursor_col = 1;
+    TD_CHECK(td_sheet_select_regex(s, "gamma", false, false, &matched, err, sizeof(err)));
+    TD_CHECK_INT(matched, 1);
+    TD_CHECK_INT(s->nselected, 2); /* rows 0 and 3 remain selected */
+    TD_CHECK(td_sheet_is_selected(s, 0));
+    TD_CHECK(!td_sheet_is_selected(s, 2));
+    TD_CHECK(td_sheet_is_selected(s, 3));
+
+    /* All-visible-columns regex skips hidden col 3. */
+    td_sheet_unselect_all(s);
+    TD_CHECK(td_sheet_select_regex(s, "hidden_hit", true, true, &matched, err, sizeof(err)));
+    TD_CHECK_INT(matched, 0);
+    TD_CHECK_INT(s->nselected, 0);
+
+    /* Invalid regex fails cleanly. */
+    TD_CHECK(!td_sheet_select_regex(s, "[unclosed", false, true, &matched, err, sizeof(err)));
+    TD_CHECK(err[0] != '\0');
+
+    /* Search forward (/), n, N, wrap-around, and backward (?). */
+    s->cursor_row = 0;
+    s->cursor_col = 1;
+    TD_CHECK(td_sheet_search(s, "^alpha$", 1, false, err, sizeof(err)));
+    TD_CHECK_INT(s->cursor_row, 3);
+    TD_CHECK(td_sheet_search_next(s, 1, err, sizeof(err)));
+    TD_CHECK_INT(s->cursor_row, 0); /* wrapped around */
+    TD_CHECK(td_sheet_search_next(s, -1, err, sizeof(err)));
+    TD_CHECK_INT(s->cursor_row, 3);
+    TD_CHECK(td_sheet_search(s, "^delta$", -1, false, err, sizeof(err)));
+    TD_CHECK_INT(s->cursor_row, 4);
+
+    /* Search across all visible columns (g/) jumps cursor_col. */
+    s->cursor_row = 0;
+    s->cursor_col = 0;
+    TD_CHECK(td_sheet_search(s, "^30$", 1, true, err, sizeof(err)));
+    TD_CHECK_INT(s->cursor_row, 4);
+    TD_CHECK_INT(s->cursor_col, 2);
+    /* Empty pattern reuses last_search ("^30$"). */
+    s->cursor_row = 0;
+    TD_CHECK(td_sheet_search(s, "", 1, true, err, sizeof(err)));
+    TD_CHECK_INT(s->cursor_row, 4);
+    /* Invalid regex does not clobber last_search ("^30$"). */
+    TD_CHECK(!td_sheet_search(s, "[bad", 1, false, err, sizeof(err)));
+    s->cursor_row = 0;
+    TD_CHECK(td_sheet_search_next(s, 1, err, sizeof(err)));
+    TD_CHECK_INT(s->cursor_row, 4);
+    /* Hidden column not matched by g/. */
+    TD_CHECK(!td_sheet_search(s, "hidden_hit", 1, true, err, sizeof(err)));
+
+    /* Single-column sort: ascending puts NULL first, descending flips NULL to last. */
+    TD_CHECK(td_sheet_sort_col(s, 2, false));
+    TD_CHECK_INT(s->row_order[0], 2); /* NULL */
+    TD_CHECK_INT(s->row_order[1], 3); /* 5 */
+    TD_CHECK_INT(s->row_order[2], 1); /* 10 */
+    TD_CHECK_INT(s->row_order[3], 0); /* 20 */
+    TD_CHECK_INT(s->row_order[4], 4); /* 30 */
+
+    TD_CHECK(td_sheet_sort_col(s, 2, true));
+    TD_CHECK_INT(s->row_order[0], 4); /* 30 */
+    TD_CHECK_INT(s->row_order[1], 0); /* 20 */
+    TD_CHECK_INT(s->row_order[2], 1); /* 10 */
+    TD_CHECK_INT(s->row_order[3], 3); /* 5 */
+    TD_CHECK_INT(s->row_order[4], 2); /* NULL flipped to last */
+
+    /* Stability check: sorting on dept (col 0) preserves descending score order within "eng". */
+    TD_CHECK(td_sheet_sort_col(s, 0, false));
+    TD_CHECK_INT(s->row_order[0], 0); /* eng, 20 */
+    TD_CHECK_INT(s->row_order[1], 3); /* eng, 5 */
+    TD_CHECK_INT(s->row_order[2], 2); /* eng, NULL */
+    TD_CHECK_INT(s->row_order[3], 4); /* ops */
+    TD_CHECK_INT(s->row_order[4], 1); /* sales */
+
+    /* g[ / g] fallback to cursor_col when no key columns are pinned. */
+    s->cursor_col = 1;
+    TD_CHECK(td_sheet_sort_keys(s, false));
+    TD_CHECK_INT(s->row_order[0], 0); /* alpha (before 3 by stability) */
+    TD_CHECK_INT(s->row_order[1], 3); /* alpha */
+    TD_CHECK_INT(s->row_order[2], 1); /* beta */
+    TD_CHECK_INT(s->row_order[3], 4); /* delta */
+    TD_CHECK_INT(s->row_order[4], 2); /* gamma */
+
+    /* Multi-column key sort: pin dept (0) and score (2). */
+    s->cols[0].is_key = true;
+    s->cols[2].is_key = true;
+    TD_CHECK(td_sheet_sort_keys(s, false));
+    TD_CHECK_INT(s->row_order[0], 2); /* eng, NULL */
+    TD_CHECK_INT(s->row_order[1], 3); /* eng, 5 */
+    TD_CHECK_INT(s->row_order[2], 0); /* eng, 20 */
+    TD_CHECK_INT(s->row_order[3], 4); /* ops, 30 */
+    TD_CHECK_INT(s->row_order[4], 1); /* sales, 10 */
+
+    /* Filtered extraction (") after sort preserves sorted order and survives parent free. */
+    s->cursor_col = 0;
+    TD_CHECK(td_sheet_select_regex(s, "^eng$", false, true, &matched, err, sizeof(err)));
+    TD_CHECK_INT(s->nselected, 3);
+    td_sheet_t *dup = td_sheet_dup_selected(s, "[eng]");
+    TD_CHECK(dup != NULL);
+    if (dup) {
+        char buf[64];
+
+        TD_CHECK_STR(dup->name, "p2[eng]");
+        TD_CHECK_INT(dup->nrows, 3);
+        TD_CHECK_INT(dup->ncols, 4);
+        TD_CHECK(dup->cols[0].is_key);
+
+        /* Delete selected rows on parent, then single row, then free parent completely. */
+        TD_CHECK_INT(td_sheet_delete_selected(s), 3);
+        TD_CHECK_INT(s->nrows, 2);
+        TD_CHECK_INT(s->nselected, 0);
+        TD_CHECK_INT(s->row_order[0], 4); /* ops */
+        TD_CHECK_INT(s->row_order[1], 1); /* sales */
+
+        /* Select all only selects the 2 remaining visible rows, not deleted ones. */
+        td_sheet_select_all(s);
+        TD_CHECK_INT(s->nselected, 2);
+        s->cursor_row = 1;
+        TD_CHECK(td_sheet_delete_row(s, 1));
+        TD_CHECK_INT(s->nrows, 1);
+        TD_CHECK_INT(s->nselected, 1);
+        TD_CHECK_INT(s->cursor_row, 0);
+        TD_CHECK(td_sheet_delete_row(s, 0));
+        TD_CHECK_INT(s->nrows, 0);
+        TD_CHECK_INT(s->nselected, 0);
+
+        td_sheet_free(s);
+        s = NULL;
+
+        /* Child sheet's deep-copied arena strings remain valid after parent free. */
+        td_val_format(td_sheet_get_cell(dup, 0, 1), dup->cols[1].type, buf, sizeof(buf));
+        TD_CHECK_STR(buf, "gamma");
+        td_val_format(td_sheet_get_cell(dup, 1, 1), dup->cols[1].type, buf, sizeof(buf));
+        TD_CHECK_STR(buf, "alpha");
+        td_val_format(td_sheet_get_cell(dup, 2, 2), dup->cols[2].type, buf, sizeof(buf));
+        TD_CHECK_STR(buf, "20");
+        td_sheet_free(dup);
+    } else {
+        td_sheet_free(s);
+    }
 }
 
 void test_sheet(void)
@@ -240,4 +449,5 @@ void test_sheet(void)
     td_stack_free(&st);
 
     test_sheet_phase1_nav_and_cols();
+    test_sheet_phase2_select_search_filter_sort();
 }
