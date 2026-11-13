@@ -5,15 +5,16 @@ A terminal spreadsheet multitool written in C, inspired by
 exploration and editing with a small runtime footprint and first-class Linux
 virtual console support, without a Python runtime.
 
-**Early development: the current version, 0.5.0, implements Phase 4 (aggregators, frequency tables, describe sheet, pivot/melt, and joins) on top of Phases 1–3.**
+**Early development: the current version, 0.6.0, implements Phase 5 (embedded C expression engine, computed columns, and column splitting) on top of Phases 1–4.**
 It opens and saves CSV/TSV/`.vd` files, accepts piped `stdin`, and supports
 grid and column navigation, regex search and selection, row deletion, filtered
 sheet extraction, typed sorting, in-place cell/row/column editing and
 duplication, cross-sheet yank/paste, per-sheet undo/redo, deterministic
 command replay (`-p` / `-b`), column aggregators with persistent footers,
-frequency tables with drill-down, statistical describe sheets, pivot/melt, and
-multi-mode sheet joins. Expression evaluation and metasheets/plotting are the
-next milestones.
+frequency tables with drill-down, statistical describe sheets, pivot/melt,
+multi-mode sheet joins, embedded expression evaluation (`td_expr`), computed
+columns (`=`/`g=`), and delimiter/regex column splitting (`:`/`;`). Metasheets
+and terminal plotting are the next milestone.
 The long-term ambition is VisiData's core workflows; full feature parity is not
 a current capability.
 
@@ -44,6 +45,10 @@ name column, and the row-selection status bar. See
   footer rows, frequency tables (`F`/`gF`) with histogram bars and
   `Enter`-to-dive extraction, statistical Describe sheet (`I`), pivot (`W`),
   melt (`M`), and stack joins (`&`: `inner`/`outer`/`full`/`diff`/`append`/`extend`).
+- Embedded C expression evaluator (`td_expr`) with arithmetic, relational,
+  logical, ternary, string, math, and date functions; computed columns (`=`),
+  selected-cell expression assignment (`g=`), and delimiter/regex column
+  splitting (`:`/`;`).
 - Column hiding/unhiding (`-`/`gv`), reordering (`H`/`L`), renaming (`^`),
   autosizing/manual width (`_`/`g_`/`z_`), pinning (`!`), and type changes
   (`#`/`%`/`$`/`@`/`~`/`z~`).
@@ -126,6 +131,8 @@ The demo contains eight built-in rows; no input file is required.
 | `"` / `d` / `gd` | Duplicate selected rows / delete row / delete selected rows |
 | `e` / `ge` / `zd` / `gzd` | Edit cell / set selected cells / clear cell / clear selected |
 | `a` / `ga` / `za` | Insert blank row / N rows / append blank column |
+| `=` / `g=` | Add computed expression column / set selected cells by expression |
+| `:` / `;` | Split column by delimiter / regex capture groups |
 | `g"` / `z"` | Duplicate current row / column in-place |
 | `y` / `gy` / `zy` / `gzy` | Yank row / selected rows / cell / selected cells |
 | `p` / `P` / `zp` | Paste after / before / into cell(s) |

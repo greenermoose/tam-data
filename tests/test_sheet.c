@@ -474,6 +474,116 @@ static void test_sheet_phase3_edit_insert_dup_undo(void)
     td_sheet_free(s);
 }
 
+static void test_sheet_phase5_expr_and_split(void)
+{
+    td_sheet_t *s = td_sheet_new("phase5", "");
+    char err[256] = "";
+    char desc[64] = "";
+    char buf[64];
+    size_t added = 0;
+
+    TD_CHECK(s != NULL);
+    td_sheet_add_col(s, "tag", TD_TYPE_STR, -20);
+    td_sheet_add_col(s, "qty", TD_TYPE_INT, -10);
+    td_sheet_add_col(s, "price", TD_TYPE_FLOAT, -10);
+    td_sheet_add_row(s);
+    td_sheet_add_row(s);
+    td_sheet_add_row(s);
+
+    td_sheet_set_cell(s, 0, 0,
+                      td_val_parse(td_slice_from_cstr("hw:bolt-10"),
+                                   TD_TYPE_STR));
+    td_sheet_set_cell(s, 0, 1,
+                      td_val_parse(td_slice_from_cstr("3"), TD_TYPE_INT));
+    td_sheet_set_cell(s, 0, 2,
+                      td_val_parse(td_slice_from_cstr("1.5"), TD_TYPE_FLOAT));
+
+    td_sheet_set_cell(s, 1, 0,
+                      td_val_parse(td_slice_from_cstr("sw:util"), TD_TYPE_STR));
+    td_sheet_set_cell(s, 1, 1,
+                      td_val_parse(td_slice_from_cstr("5"), TD_TYPE_INT));
+    td_sheet_set_cell(s, 1, 2,
+                      td_val_parse(td_slice_from_cstr("4.0"), TD_TYPE_FLOAT));
+
+    td_sheet_set_cell(s, 2, 0,
+                      td_val_parse(td_slice_from_cstr("misc"), TD_TYPE_STR));
+    td_sheet_set_cell(s, 2, 1,
+                      td_val_parse(td_slice_from_cstr("2"), TD_TYPE_INT));
+    td_sheet_set_cell(s, 2, 2,
+                      td_val_parse(td_slice_from_cstr("2.25"), TD_TYPE_FLOAT));
+
+    /* Computed expression column (=) + type inference + undo/redo. */
+    TD_CHECK(td_sheet_add_expr_col(s, 3, "qty * price", err, sizeof(err)));
+    TD_CHECK_INT(s->ncols, 4);
+    TD_CHECK_STR(s->cols[3].name, "qty * price");
+    TD_CHECK_INT(s->cols[3].type, TD_TYPE_FLOAT);
+    td_val_format(td_sheet_get_cell(s, 0, 3), TD_TYPE_FLOAT, buf, sizeof(buf));
+    TD_CHECK_STR(buf, "4.5");
+    td_val_format(td_sheet_get_cell(s, 1, 3), TD_TYPE_FLOAT, buf, sizeof(buf));
+    TD_CHECK_STR(buf, "20");
+
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->ncols, 3);
+    TD_CHECK(td_sheet_redo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->ncols, 4);
+    td_val_format(td_sheet_get_cell(s, 2, 3), TD_TYPE_FLOAT, buf, sizeof(buf));
+    TD_CHECK_STR(buf, "4.5");
+
+    /* Set selected cells by expression (g=) + undo/redo. */
+    TD_CHECK_INT(td_sheet_set_selected_expr(s, 1, "qty + 10", err, sizeof(err)),
+                 0);
+    td_sheet_select_row(s, 0);
+    td_sheet_select_row(s, 2);
+    TD_CHECK_INT(td_sheet_set_selected_expr(s, 1, "qty * 10", err, sizeof(err)),
+                 2);
+    TD_CHECK_INT(td_sheet_get_cell(s, 0, 1).as.i, 30);
+    TD_CHECK_INT(td_sheet_get_cell(s, 1, 1).as.i, 5);
+    TD_CHECK_INT(td_sheet_get_cell(s, 2, 1).as.i, 20);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(td_sheet_get_cell(s, 0, 1).as.i, 3);
+    TD_CHECK_INT(td_sheet_get_cell(s, 2, 1).as.i, 2);
+
+    /* Delimiter split (:) + multi-column atomic undo/redo. */
+    TD_CHECK(!td_sheet_split_col_delim(s, 0, "", &added, err, sizeof(err)));
+    TD_CHECK(td_sheet_split_col_delim(s, 0, ":", &added, err, sizeof(err)));
+    TD_CHECK_INT(added, 2);
+    TD_CHECK_INT(s->ncols, 6);
+    TD_CHECK_STR(s->cols[1].name, "tag_1");
+    TD_CHECK_STR(s->cols[2].name, "tag_2");
+    td_val_format(td_sheet_get_cell(s, 0, 1), TD_TYPE_ANY, buf, sizeof(buf));
+    TD_CHECK_STR(buf, "hw");
+    td_val_format(td_sheet_get_cell(s, 0, 2), TD_TYPE_ANY, buf, sizeof(buf));
+    TD_CHECK_STR(buf, "bolt-10");
+    TD_CHECK_INT(td_sheet_get_cell(s, 2, 2).type, TD_TYPE_NULL);
+
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->ncols, 4);
+    TD_CHECK(td_sheet_redo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->ncols, 6);
+    td_val_format(td_sheet_get_cell(s, 1, 2), TD_TYPE_ANY, buf, sizeof(buf));
+    TD_CHECK_STR(buf, "util");
+
+    /* Regex capture group split (;) + error checks + atomic undo/redo. */
+    TD_CHECK(!td_sheet_split_col_regex(s, 0, "no_groups", &added,
+                                       err, sizeof(err)));
+    TD_CHECK(td_sheet_split_col_regex(s, 0, "^([^:]+):([^-]+)-([0-9]+)$",
+                                      &added, err, sizeof(err)));
+    TD_CHECK_INT(added, 3);
+    TD_CHECK_INT(s->ncols, 9);
+    td_val_format(td_sheet_get_cell(s, 0, 1), TD_TYPE_ANY, buf, sizeof(buf));
+    TD_CHECK_STR(buf, "hw");
+    td_val_format(td_sheet_get_cell(s, 0, 2), TD_TYPE_ANY, buf, sizeof(buf));
+    TD_CHECK_STR(buf, "bolt");
+    td_val_format(td_sheet_get_cell(s, 0, 3), TD_TYPE_ANY, buf, sizeof(buf));
+    TD_CHECK_STR(buf, "10");
+    TD_CHECK_INT(td_sheet_get_cell(s, 1, 1).type, TD_TYPE_NULL);
+
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->ncols, 6);
+
+    td_sheet_free(s);
+}
+
 void test_sheet(void)
 {
     td_sheet_t *s = make_sheet();
@@ -600,4 +710,5 @@ void test_sheet(void)
     test_sheet_phase1_nav_and_cols();
     test_sheet_phase2_select_search_filter_sort();
     test_sheet_phase3_edit_insert_dup_undo();
+    test_sheet_phase5_expr_and_split();
 }

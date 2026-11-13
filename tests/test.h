@@ -45,6 +45,7 @@ void td_test_fail(const char *file, int line, const char *expr);
 
 void test_arena(void);
 void test_val(void);
+void test_expr(void);
 void test_sheet(void);
 void test_csv(void);
 void test_term(void);

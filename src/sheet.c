@@ -6,12 +6,14 @@
 #include <string.h>
 #include <sys/mman.h>
 
+#include "expr.h"
 #include "utf8.h"
 
 #define TD_SHEET_ROW_CHUNK 16
 #define TD_SHEET_COL_CHUNK 8
 #define TD_WIDTH_SAMPLE_ROWS 1000
 #define TD_WIDTH_VIEWPORT_ROWS 128
+#define TD_SPLIT_MAX_COLS 128
 
 typedef enum {
     TD_UNDO_CELLS = 0,
@@ -70,7 +72,9 @@ struct td_undo_entry {
         } col_type;
         struct {
             size_t col_idx;
-            td_col_t saved_col;
+            size_t count;
+            size_t saved_row_cap;
+            td_col_t *saved_cols;
             bool present;
         } col_add;
         struct {
@@ -104,8 +108,11 @@ static void td_undo_entry_free(td_undo_entry_t *e)
         free(e->u.col_type.alt_cells);
         break;
     case TD_UNDO_COL_ADD:
-        if (!e->u.col_add.present)
-            free(e->u.col_add.saved_col.cells);
+        if (!e->u.col_add.present && e->u.col_add.saved_cols) {
+            for (size_t i = 0; i < e->u.col_add.count; i++)
+                free(e->u.col_add.saved_cols[i].cells);
+            free(e->u.col_add.saved_cols);
+        }
         break;
     }
     memset(e, 0, sizeof(*e));
@@ -1805,35 +1812,59 @@ static bool td_undo_swap_rows(td_sheet_t *s, td_undo_entry_t *e)
 static bool td_undo_swap_col_add(td_sheet_t *s, td_undo_entry_t *e)
 {
     size_t idx = e->u.col_add.col_idx;
+    size_t count = e->u.col_add.count;
+
+    if (count == 0)
+        return false;
 
     if (e->u.col_add.present) {
-        if (idx >= s->ncols)
+        td_col_t *saved;
+
+        if (idx >= s->ncols || count > s->ncols - idx)
             return false;
-        e->u.col_add.saved_col = s->cols[idx];
-        if (idx + 1 < s->ncols)
-            memmove(&s->cols[idx], &s->cols[idx + 1],
-                    (s->ncols - idx - 1) * sizeof(s->cols[0]));
-        s->ncols--;
+        saved = calloc(count, sizeof(td_col_t));
+        if (!saved)
+            return false;
+        memcpy(saved, &s->cols[idx], count * sizeof(td_col_t));
+        if (idx + count < s->ncols)
+            memmove(&s->cols[idx], &s->cols[idx + count],
+                    (s->ncols - idx - count) * sizeof(s->cols[0]));
+        s->ncols -= count;
+        e->u.col_add.saved_cols = saved;
+        e->u.col_add.saved_row_cap = s->row_cap;
         e->u.col_add.present = false;
         return true;
     }
 
-    if (idx > s->ncols || !td_sheet_grow_cols(s, s->ncols + 1))
+    if (idx > s->ncols || count > SIZE_MAX - s->ncols ||
+        !td_sheet_grow_cols(s, s->ncols + count))
         return false;
-    if (s->row_cap > 0) {
-        td_val_t *cells = realloc(e->u.col_add.saved_col.cells,
-                                  s->row_cap * sizeof(td_val_t));
-        if (!cells)
-            return false;
-        e->u.col_add.saved_col.cells = cells;
+    if (s->row_cap > 0 && e->u.col_add.saved_cols) {
+        for (size_t k = 0; k < count; k++) {
+            td_col_t *sc = &e->u.col_add.saved_cols[k];
+
+            if (s->row_cap > e->u.col_add.saved_row_cap || !sc->cells) {
+                td_val_t *cells = realloc(sc->cells,
+                                          s->row_cap * sizeof(td_val_t));
+                if (!cells)
+                    return false;
+                for (size_t r = e->u.col_add.saved_row_cap; r < s->row_cap; r++)
+                    cells[r] = TD_VAL_NULL;
+                sc->cells = cells;
+            }
+        }
     }
     if (idx < s->ncols)
-        memmove(&s->cols[idx + 1], &s->cols[idx],
+        memmove(&s->cols[idx + count], &s->cols[idx],
                 (s->ncols - idx) * sizeof(s->cols[0]));
-    s->cols[idx] = e->u.col_add.saved_col;
-    s->cols[idx].cached_width = 0;
-    memset(&e->u.col_add.saved_col, 0, sizeof(e->u.col_add.saved_col));
-    s->ncols++;
+    for (size_t k = 0; k < count; k++) {
+        s->cols[idx + k] = e->u.col_add.saved_cols[k];
+        s->cols[idx + k].cached_width = 0;
+        s->cols[idx + k].agg_dirty = true;
+    }
+    free(e->u.col_add.saved_cols);
+    e->u.col_add.saved_cols = NULL;
+    s->ncols += count;
     e->u.col_add.present = true;
     return true;
 }
@@ -2277,15 +2308,45 @@ static bool td_col_name_exists(const td_sheet_t *s, const char *name)
     return false;
 }
 
+static bool td_sheet_insert_cols_batch(td_sheet_t *s, size_t col_pos,
+                                       td_col_t *cols_in, size_t count,
+                                       const char *desc)
+{
+    td_undo_entry_t e;
+
+    if (!s || !cols_in || count == 0 || col_pos > s->ncols ||
+        count > SIZE_MAX - s->ncols ||
+        !td_sheet_grow_cols(s, s->ncols + count))
+        return false;
+
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_ADD, desc ? desc : "add columns");
+        e.u.col_add.col_idx = col_pos;
+        e.u.col_add.count = count;
+        e.u.col_add.present = true;
+    }
+
+    if (col_pos < s->ncols)
+        memmove(&s->cols[col_pos + count], &s->cols[col_pos],
+                (s->ncols - col_pos) * sizeof(s->cols[0]));
+    for (size_t k = 0; k < count; k++)
+        s->cols[col_pos + k] = cols_in[k];
+    s->ncols += count;
+    s->cursor_col = col_pos;
+
+    if (s->record_undo)
+        (void)td_undo_record(s, &e);
+    return true;
+}
+
 static size_t td_sheet_insert_col_at(td_sheet_t *s, size_t col_pos,
                                      const char *name, td_type_t type,
                                      int width, size_t copy_from,
                                      const char *desc)
 {
     td_col_t col;
-    td_undo_entry_t e;
 
-    if (!s || col_pos > s->ncols || !td_sheet_grow_cols(s, s->ncols + 1))
+    if (!s || col_pos > s->ncols)
         return SIZE_MAX;
 
     memset(&col, 0, sizeof(col));
@@ -2316,21 +2377,10 @@ static size_t td_sheet_insert_col_at(td_sheet_t *s, size_t col_pos,
         }
     }
 
-    if (s->record_undo) {
-        td_undo_init_entry(&e, s, TD_UNDO_COL_ADD, desc);
-        e.u.col_add.col_idx = col_pos;
-        e.u.col_add.present = true;
+    if (!td_sheet_insert_cols_batch(s, col_pos, &col, 1, desc)) {
+        free(col.cells);
+        return SIZE_MAX;
     }
-
-    if (col_pos < s->ncols)
-        memmove(&s->cols[col_pos + 1], &s->cols[col_pos],
-                (s->ncols - col_pos) * sizeof(s->cols[0]));
-    s->cols[col_pos] = col;
-    s->ncols++;
-    s->cursor_col = col_pos;
-
-    if (s->record_undo)
-        (void)td_undo_record(s, &e);
     return col_pos;
 }
 
@@ -2375,4 +2425,517 @@ bool td_sheet_dup_col(td_sheet_t *s, size_t col)
                                  col, "duplicate column");
     free(name);
     return idx != SIZE_MAX;
+}
+
+static void td_sheet_set_err(char *err, size_t err_cap, const char *msg)
+{
+    if (err && err_cap > 0)
+        snprintf(err, err_cap, "%s", msg ? msg : "");
+}
+
+static td_type_t td_infer_expr_col_type(td_type_t cur, bool *has_type,
+                                        td_type_t val_type)
+{
+    if (val_type == TD_TYPE_NULL || val_type == TD_TYPE_ERR)
+        return cur;
+    if (!*has_type) {
+        *has_type = true;
+        return val_type;
+    }
+    if (cur == val_type)
+        return cur;
+    if ((cur == TD_TYPE_INT || cur == TD_TYPE_FLOAT) &&
+        (val_type == TD_TYPE_INT || val_type == TD_TYPE_FLOAT))
+        return TD_TYPE_FLOAT;
+    if ((cur == TD_TYPE_INT || cur == TD_TYPE_FLOAT ||
+         cur == TD_TYPE_CURRENCY) &&
+        (val_type == TD_TYPE_INT || val_type == TD_TYPE_FLOAT ||
+         val_type == TD_TYPE_CURRENCY))
+        return TD_TYPE_CURRENCY;
+    return TD_TYPE_ANY;
+}
+
+bool td_sheet_add_expr_col(td_sheet_t *s, size_t col_pos,
+                           const char *expr_text, char *err, size_t err_cap)
+{
+    td_expr_t *expr;
+    td_col_t col;
+    td_arena_t scratch;
+    td_type_t inferred = TD_TYPE_ANY;
+    bool has_type = false;
+
+    if (err && err_cap > 0)
+        err[0] = '\0';
+    if (!s || col_pos > s->ncols) {
+        td_sheet_set_err(err, err_cap, "invalid column position");
+        return false;
+    }
+    expr = td_expr_compile(s, expr_text, err, err_cap);
+    if (!expr)
+        return false;
+
+    memset(&col, 0, sizeof(col));
+    col.name = td_arena_strdup(&s->arena, expr_text);
+    if (!col.name) {
+        td_expr_free(expr);
+        td_sheet_set_err(err, err_cap, "out of memory");
+        return false;
+    }
+    col.type = TD_TYPE_ANY;
+    col.width = -TD_AUTO_WIDTH_CAP;
+
+    td_arena_init(&scratch, 0);
+    if (s->row_cap > 0) {
+        col.cells = malloc(s->row_cap * sizeof(td_val_t));
+        if (!col.cells) {
+            td_arena_free(&scratch);
+            td_expr_free(expr);
+            td_sheet_set_err(err, err_cap, "out of memory");
+            return false;
+        }
+        for (size_t r = 0; r < s->row_cap; r++)
+            col.cells[r] = TD_VAL_NULL;
+
+        for (size_t r = 0; r < s->phys_nrows; r++) {
+            char eval_err[128] = "";
+            bool ok = true;
+            td_val_t v;
+
+            td_arena_reset(&scratch);
+            v = td_expr_eval(expr, s, r, &scratch, eval_err, sizeof(eval_err));
+            v = td_clone_val_to_arena(&s->arena, v, &ok);
+            if (!ok) {
+                free(col.cells);
+                td_arena_free(&scratch);
+                td_expr_free(expr);
+                td_sheet_set_err(err, err_cap, "out of memory");
+                return false;
+            }
+            col.cells[r] = v;
+            inferred = td_infer_expr_col_type(inferred, &has_type, v.type);
+        }
+    }
+    td_arena_free(&scratch);
+    td_expr_free(expr);
+
+    if (has_type) {
+        col.type = inferred;
+        if (inferred == TD_TYPE_FLOAT || inferred == TD_TYPE_CURRENCY) {
+            for (size_t r = 0; r < s->phys_nrows; r++) {
+                if (col.cells[r].type == TD_TYPE_INT) {
+                    col.cells[r].as.f = (double)col.cells[r].as.i;
+                    col.cells[r].type = inferred;
+                } else if (col.cells[r].type == TD_TYPE_FLOAT &&
+                           inferred == TD_TYPE_CURRENCY) {
+                    col.cells[r].type = TD_TYPE_CURRENCY;
+                }
+            }
+        }
+    }
+
+    if (!td_sheet_insert_cols_batch(s, col_pos, &col, 1, "add expr column")) {
+        free(col.cells);
+        td_sheet_set_err(err, err_cap, "out of memory");
+        return false;
+    }
+    return true;
+}
+
+size_t td_sheet_set_selected_expr(td_sheet_t *s, size_t col,
+                                  const char *expr_text, char *err,
+                                  size_t err_cap)
+{
+    td_expr_t *expr;
+    size_t *vrows;
+    size_t *cols;
+    td_val_t *vals;
+    td_arena_t scratch;
+    size_t n = 0;
+
+    if (err && err_cap > 0)
+        err[0] = '\0';
+    if (!s || col >= s->ncols) {
+        td_sheet_set_err(err, err_cap, "no column");
+        return 0;
+    }
+    if (s->nselected == 0 || s->nrows == 0 || !s->row_order) {
+        td_sheet_set_err(err, err_cap, "no rows selected");
+        return 0;
+    }
+
+    expr = td_expr_compile(s, expr_text, err, err_cap);
+    if (!expr)
+        return 0;
+
+    vrows = malloc(s->nrows * sizeof(size_t));
+    cols = malloc(s->nrows * sizeof(size_t));
+    vals = malloc(s->nrows * sizeof(td_val_t));
+    if (!vrows || !cols || !vals) {
+        free(vrows);
+        free(cols);
+        free(vals);
+        td_expr_free(expr);
+        td_sheet_set_err(err, err_cap, "out of memory");
+        return 0;
+    }
+
+    td_arena_init(&scratch, 0);
+    for (size_t vr = 0; vr < s->nrows; vr++) {
+        size_t phys = s->row_order[vr];
+
+        if (!td_sheet_is_selected(s, phys))
+            continue;
+        char eval_err[128] = "";
+        bool ok = true;
+        td_val_t v;
+
+        td_arena_reset(&scratch);
+        v = td_expr_eval(expr, s, phys, &scratch, eval_err, sizeof(eval_err));
+        v = td_clone_val_to_arena(&s->arena, v, &ok);
+        if (!ok) {
+            n = 0;
+            td_sheet_set_err(err, err_cap, "out of memory");
+            break;
+        }
+        vrows[n] = vr;
+        cols[n] = col;
+        vals[n] = v;
+        n++;
+    }
+    td_arena_free(&scratch);
+    td_expr_free(expr);
+
+    if (n > 0 && !td_sheet_apply_cell_batch(s, vrows, cols, vals, n,
+                                            "set selected expr")) {
+        n = 0;
+        td_sheet_set_err(err, err_cap, "failed to apply expression");
+    }
+
+    free(vrows);
+    free(cols);
+    free(vals);
+    return n;
+}
+
+static char *td_split_format_cell(const td_sheet_t *s, size_t phys_row,
+                                  size_t col, char *stack_buf,
+                                  size_t stack_cap, size_t *len_out,
+                                  char **dyn_out)
+{
+    td_val_t v = td_sheet_get_cell(s, phys_row, col);
+    size_t n;
+
+    *dyn_out = NULL;
+    if (v.type == TD_TYPE_NULL) {
+        stack_buf[0] = '\0';
+        *len_out = 0;
+        return stack_buf;
+    }
+    n = td_val_format(v, s->cols[col].type, stack_buf, stack_cap);
+    if (n < stack_cap) {
+        *len_out = n;
+        return stack_buf;
+    }
+    *dyn_out = malloc(n + 1);
+    if (!*dyn_out) {
+        *len_out = 0;
+        return NULL;
+    }
+    (void)td_val_format(v, s->cols[col].type, *dyn_out, n + 1);
+    *len_out = n;
+    return *dyn_out;
+}
+
+static bool td_init_split_cols(td_sheet_t *s, size_t src_col, td_col_t *out,
+                               size_t count)
+{
+    const char *base = (s->cols[src_col].name && s->cols[src_col].name[0])
+                           ? s->cols[src_col].name
+                           : "col";
+    size_t name_cap = strlen(base) + 32;
+    char *name_buf = malloc(name_cap);
+
+    if (!name_buf)
+        return false;
+
+    for (size_t k = 0; k < count; k++) {
+        memset(&out[k], 0, sizeof(out[k]));
+        snprintf(name_buf, name_cap, "%s_%zu", base, k + 1);
+        for (size_t dup = 2; td_col_name_exists(s, name_buf); dup++)
+            snprintf(name_buf, name_cap, "%s_%zu_%zu", base, k + 1, dup);
+        out[k].name = td_arena_strdup(&s->arena, name_buf);
+        if (!out[k].name) {
+            free(name_buf);
+            for (size_t j = 0; j < k; j++)
+                free(out[j].cells);
+            return false;
+        }
+        out[k].type = TD_TYPE_ANY;
+        out[k].width = -TD_AUTO_WIDTH_CAP;
+        if (s->row_cap > 0) {
+            out[k].cells = malloc(s->row_cap * sizeof(td_val_t));
+            if (!out[k].cells) {
+                free(name_buf);
+                for (size_t j = 0; j < k; j++)
+                    free(out[j].cells);
+                return false;
+            }
+            for (size_t r = 0; r < s->row_cap; r++)
+                out[k].cells[r] = TD_VAL_NULL;
+        }
+    }
+    free(name_buf);
+    return true;
+}
+
+static void td_free_split_cols(td_col_t *cols, size_t count)
+{
+    if (!cols)
+        return;
+    for (size_t k = 0; k < count; k++)
+        free(cols[k].cells);
+    free(cols);
+}
+
+static td_val_t td_make_arena_slice_val(td_arena_t *a, const char *p,
+                                        size_t len, bool *ok)
+{
+    char *copy;
+    td_val_t v;
+
+    *ok = true;
+    if (!p || len == 0)
+        return TD_VAL_NULL;
+    copy = td_arena_strndup(a, p, len);
+    if (!copy) {
+        *ok = false;
+        return TD_VAL_ERR;
+    }
+    v.type = TD_TYPE_ANY;
+    v.as.s.data = copy;
+    v.as.s.len = len > UINT32_MAX ? UINT32_MAX : (uint32_t)len;
+    return v;
+}
+
+bool td_sheet_split_col_delim(td_sheet_t *s, size_t col, const char *delim,
+                              size_t *added_out, char *err, size_t err_cap)
+{
+    const char *sep;
+    size_t sep_len;
+    size_t max_parts = 1;
+    td_col_t *new_cols;
+
+    if (added_out)
+        *added_out = 0;
+    if (err && err_cap > 0)
+        err[0] = '\0';
+    if (!s || col >= s->ncols) {
+        td_sheet_set_err(err, err_cap, "no column");
+        return false;
+    }
+    if (!delim || !delim[0]) {
+        td_sheet_set_err(err, err_cap, "empty delimiter");
+        return false;
+    }
+    sep = strcmp(delim, "\\t") == 0 ? "\t" : delim;
+    sep_len = strlen(sep);
+
+    for (size_t r = 0; r < s->phys_nrows; r++) {
+        char stack_buf[256];
+        char *dyn = NULL;
+        size_t len = 0;
+        const char *text = td_split_format_cell(s, r, col, stack_buf,
+                                                sizeof(stack_buf), &len, &dyn);
+        size_t parts = 1;
+        size_t pos = 0;
+
+        if (!text) {
+            td_sheet_set_err(err, err_cap, "out of memory");
+            return false;
+        }
+        while (pos + sep_len <= len && parts < TD_SPLIT_MAX_COLS) {
+            if (memcmp(text + pos, sep, sep_len) == 0) {
+                parts++;
+                pos += sep_len;
+            } else {
+                pos++;
+            }
+        }
+        if (parts > max_parts)
+            max_parts = parts;
+        free(dyn);
+    }
+
+    new_cols = calloc(max_parts, sizeof(td_col_t));
+    if (!new_cols || !td_init_split_cols(s, col, new_cols, max_parts)) {
+        free(new_cols);
+        td_sheet_set_err(err, err_cap, "out of memory");
+        return false;
+    }
+
+    for (size_t r = 0; r < s->phys_nrows; r++) {
+        char stack_buf[256];
+        char *dyn = NULL;
+        size_t len = 0;
+        const char *text = td_split_format_cell(s, r, col, stack_buf,
+                                                sizeof(stack_buf), &len, &dyn);
+        size_t start = 0;
+        size_t pos = 0;
+        size_t part = 0;
+
+        if (!text) {
+            td_free_split_cols(new_cols, max_parts);
+            td_sheet_set_err(err, err_cap, "out of memory");
+            return false;
+        }
+        if (len > 0) {
+            while (part + 1 < max_parts && pos + sep_len <= len) {
+                if (memcmp(text + pos, sep, sep_len) == 0) {
+                    bool ok = true;
+
+                    new_cols[part].cells[r] = td_make_arena_slice_val(
+                        &s->arena, text + start, pos - start, &ok);
+                    if (!ok) {
+                        free(dyn);
+                        td_free_split_cols(new_cols, max_parts);
+                        td_sheet_set_err(err, err_cap, "out of memory");
+                        return false;
+                    }
+                    part++;
+                    pos += sep_len;
+                    start = pos;
+                } else {
+                    pos++;
+                }
+            }
+            if (part < max_parts) {
+                bool ok = true;
+
+                new_cols[part].cells[r] = td_make_arena_slice_val(
+                    &s->arena, text + start, len - start, &ok);
+                if (!ok) {
+                    free(dyn);
+                    td_free_split_cols(new_cols, max_parts);
+                    td_sheet_set_err(err, err_cap, "out of memory");
+                    return false;
+                }
+            }
+        }
+        free(dyn);
+    }
+
+    if (!td_sheet_insert_cols_batch(s, col + 1, new_cols, max_parts,
+                                    "split column")) {
+        td_free_split_cols(new_cols, max_parts);
+        td_sheet_set_err(err, err_cap, "out of memory");
+        return false;
+    }
+    free(new_cols);
+    if (added_out)
+        *added_out = max_parts;
+    return true;
+}
+
+bool td_sheet_split_col_regex(td_sheet_t *s, size_t col, const char *pattern,
+                              size_t *added_out, char *err, size_t err_cap)
+{
+    regex_t re;
+    int rc;
+    size_t ngroups;
+    td_col_t *new_cols;
+    regmatch_t *pmatch;
+
+    if (added_out)
+        *added_out = 0;
+    if (err && err_cap > 0)
+        err[0] = '\0';
+    if (!s || col >= s->ncols) {
+        td_sheet_set_err(err, err_cap, "no column");
+        return false;
+    }
+    if (!pattern || !pattern[0]) {
+        td_sheet_set_err(err, err_cap, "empty regex");
+        return false;
+    }
+
+    rc = regcomp(&re, pattern, REG_EXTENDED);
+    if (rc != 0) {
+        if (err && err_cap > 0)
+            regerror(rc, &re, err, err_cap);
+        return false;
+    }
+    ngroups = re.re_nsub;
+    if (ngroups == 0) {
+        regfree(&re);
+        td_sheet_set_err(err, err_cap,
+                         "regex must contain at least one capture group (...)");
+        return false;
+    }
+    if (ngroups > TD_SPLIT_MAX_COLS) {
+        regfree(&re);
+        td_sheet_set_err(err, err_cap, "too many capture groups");
+        return false;
+    }
+
+    new_cols = calloc(ngroups, sizeof(td_col_t));
+    pmatch = calloc(ngroups + 1, sizeof(regmatch_t));
+    if (!new_cols || !pmatch || !td_init_split_cols(s, col, new_cols, ngroups)) {
+        free(pmatch);
+        free(new_cols);
+        regfree(&re);
+        td_sheet_set_err(err, err_cap, "out of memory");
+        return false;
+    }
+
+    for (size_t r = 0; r < s->phys_nrows; r++) {
+        char stack_buf[256];
+        char *dyn = NULL;
+        size_t len = 0;
+        const char *text = td_split_format_cell(s, r, col, stack_buf,
+                                                sizeof(stack_buf), &len, &dyn);
+
+        if (!text) {
+            free(pmatch);
+            td_free_split_cols(new_cols, ngroups);
+            regfree(&re);
+            td_sheet_set_err(err, err_cap, "out of memory");
+            return false;
+        }
+        if (len > 0 && regexec(&re, text, ngroups + 1, pmatch, 0) == 0) {
+            for (size_t g = 0; g < ngroups; g++) {
+                regoff_t so = pmatch[g + 1].rm_so;
+                regoff_t eo = pmatch[g + 1].rm_eo;
+
+                if (so >= 0 && eo >= so && (size_t)eo <= len) {
+                    bool ok = true;
+
+                    new_cols[g].cells[r] = td_make_arena_slice_val(
+                        &s->arena, text + so, (size_t)(eo - so), &ok);
+                    if (!ok) {
+                        free(dyn);
+                        free(pmatch);
+                        td_free_split_cols(new_cols, ngroups);
+                        regfree(&re);
+                        td_sheet_set_err(err, err_cap, "out of memory");
+                        return false;
+                    }
+                }
+            }
+        }
+        free(dyn);
+    }
+
+    free(pmatch);
+    regfree(&re);
+
+    if (!td_sheet_insert_cols_batch(s, col + 1, new_cols, ngroups,
+                                    "capture column")) {
+        td_free_split_cols(new_cols, ngroups);
+        td_sheet_set_err(err, err_cap, "out of memory");
+        return false;
+    }
+    free(new_cols);
+    if (added_out)
+        *added_out = ngroups;
+    return true;
 }

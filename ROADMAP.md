@@ -2,7 +2,7 @@
 
 This document outlines the architectural plan and phased roadmap for `tam-data`: a pure-C, zero-Python rewrite of [VisiData](https://www.visidata.org/) built on the Tam C libraries (`libtam`) and designed to run natively on any Tamlinux system—including bare Linux virtual terminals (`TERM=linux`).
 
-**Current implementation:** v0.5.0 implements CSV/TSV loading (disk files and piped `stdin`), grid navigation, column controls, atomic CSV/TSV saving, POSIX regex row selection and search, row deletion, filtered sheet extraction, stable typed single/multi-column sorting, in-place cell/row/column editing and duplication, a cross-sheet yank ring, per-sheet undo/redo, a command log with CLI batch/interactive replay, column aggregators (`+`/`z+`) with persistent footer summaries, frequency tables (`F`/`gF`) with histogram bars and `Enter`-to-dive extraction, a statistical Describe sheet (`I`), pivot (`W`) and melt (`M`), and stack-based sheet joins (`&`) alongside the built-in demo. Expression evaluation and metasheets/plotting below remain planned. Performance figures in this roadmap are targets; no startup, memory, or file-loading benchmarks have been published for `tam-data`.
+**Current implementation:** v0.6.0 implements CSV/TSV loading (disk files and piped `stdin`), grid navigation, column controls, atomic CSV/TSV saving, POSIX regex row selection and search, row deletion, filtered sheet extraction, stable typed single/multi-column sorting, in-place cell/row/column editing and duplication, a cross-sheet yank ring, per-sheet undo/redo, a command log with CLI batch/interactive replay, column aggregators (`+`/`z+`) with persistent footer summaries, frequency tables (`F`/`gF`) with histogram bars and `Enter`-to-dive extraction, a statistical Describe sheet (`I`), pivot (`W`) and melt (`M`), stack-based sheet joins (`&`), an embedded C expression evaluator (`td_expr`), computed/derived columns (`=`/`g=`), and delimiter/regex column splitting (`:`/`;`) alongside the built-in demo. Metasheets, help/command palette, plotting, and extended format loaders remain planned. Performance figures in this roadmap are targets; no startup, memory, or file-loading benchmarks have been published for `tam-data`.
 
 ---
 
@@ -37,7 +37,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 | **`v0.3.0`** | **Phase 2** | Row selection bitset, regex search, filtering, and typed multi-column sorting | Completed |
 | **`v0.4.0`** | **Phase 3** | In-place editing, clipboard/yank ring, undo/redo, command replay log | Completed |
 | **`v0.5.0`** | **Phase 4** | Frequency tables (`F`), aggregation summaries (`+`), describe sheet (`I`), pivot/melt, joins | Completed |
-| **`v0.6.0`** | **Phase 5** | Embedded C expression engine (`td_expr`), computed/derived columns | Planned |
+| **`v0.6.0`** | **Phase 5** | Embedded C expression engine (`td_expr`), computed/derived columns | Completed |
 | **`v1.0.0`** | **Phase 6** | Metasheets (`S`/`C`/`O`/Dir), command palette (`Space`/`Ctrl+H`), terminal plotting, extended formats | Planned |
 
 - **Patch Releases (`x.y.Z`)**: Bug fixes, terminal compatibility adjustments, performance enhancements, and sanitizer fixes without interface changes.
@@ -140,13 +140,13 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 **Goal:** Provide computed columns (`=`) and transformations without a Python interpreter.
 
-- [ ] **Embedded C Expression Evaluator (`td_expr`):**
-  - Bytecode-compiled or AST-evaluated expression engine operating over row contexts:
+- [x] **Embedded C Expression Evaluator (`td_expr`):**
+  - AST-evaluated expression engine operating over row contexts:
     - Column references by name (`col_name`, `${col name}`) or index (`$0`, `$1`).
     - Arithmetic (`+`, `-`, `*`, `/`, `%`, `**`), relational (`==`, `!=`, `<`, `<=`, `>`, `>=`), logical (`&&`, `||`, `!`), and ternary (`? :`) operators.
     - Built-in string functions: `len()`, `lower()`, `upper()`, `trim()`, `substr()`, `replace()`, `contains()`, `match()`.
     - Built-in math & date functions: `abs()`, `round()`, `floor()`, `ceil()`, `min()`, `max()`, `log()`, `sqrt()`, `year()`, `month()`, `day()`, `datediff()`.
-- [ ] **Derived & Transformed Columns:**
+- [x] **Derived & Transformed Columns:**
   - Add computed formula column (`=`), set selected cells by expression (`g=`).
   - Split column by delimiter (`:`) or regex capture groups (`;`).
 

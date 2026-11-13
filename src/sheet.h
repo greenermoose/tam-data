@@ -161,6 +161,15 @@ bool td_sheet_apply_cell_batch(td_sheet_t *s, const size_t *vis_rows,
 size_t td_sheet_append_blank_col(td_sheet_t *s);
 bool td_sheet_dup_row(td_sheet_t *s, size_t vis_row);
 bool td_sheet_dup_col(td_sheet_t *s, size_t col);
+bool td_sheet_add_expr_col(td_sheet_t *s, size_t col_pos,
+                           const char *expr_text, char *err, size_t err_cap);
+size_t td_sheet_set_selected_expr(td_sheet_t *s, size_t col,
+                                  const char *expr_text, char *err,
+                                  size_t err_cap);
+bool td_sheet_split_col_delim(td_sheet_t *s, size_t col, const char *delim,
+                              size_t *added_out, char *err, size_t err_cap);
+bool td_sheet_split_col_regex(td_sheet_t *s, size_t col, const char *pattern,
+                              size_t *added_out, char *err, size_t err_cap);
 
 bool td_stack_push(td_stack_t *st, td_sheet_t *s);
 td_sheet_t *td_stack_pop(td_stack_t *st);

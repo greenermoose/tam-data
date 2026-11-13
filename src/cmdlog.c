@@ -91,6 +91,10 @@ static const td_cmd_meta_t td_cmd_table[] = {
     { TD_CMD_MELT,                "melt-sheet",          "M",      false },
     { TD_CMD_JOIN,                "join-sheets",         "&",      true  },
     { TD_CMD_DIVE_ROW,            "dive-row",            "Enter",  false },
+    { TD_CMD_ADD_COL_EXPR,        "addcol-expr",         "=",      true  },
+    { TD_CMD_SET_COL_EXPR,        "setcol-expr",         "g=",     true  },
+    { TD_CMD_SPLIT_COL_DELIM,     "split-col",           ":",      true  },
+    { TD_CMD_SPLIT_COL_REGEX,     "capture-col",         ";",      true  },
     { TD_CMD_REDRAW,              "redraw",              "Ctrl+L", false }
 };
 

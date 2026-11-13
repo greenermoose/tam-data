@@ -1156,6 +1156,60 @@ bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
                                    "filtered rows");
         break;
     }
+    case TD_CMD_ADD_COL_EXPR: {
+        char eerr[256];
+        size_t pos = s->ncols == 0 ? 0 : (s->cursor_col + 1);
+
+        if (pos > s->ncols)
+            pos = s->ncols;
+        if (!td_sheet_add_expr_col(s, pos, input_arg, eerr, sizeof(eerr)))
+            return td_exec_fail(ctx, err, err_cap, "expr failed: %s", eerr);
+        td_set_message(ctx->msg, ctx->msg_cap, "added computed column %s",
+                       s->cols[pos].name ? s->cols[pos].name : "");
+        break;
+    }
+    case TD_CMD_SET_COL_EXPR: {
+        char eerr[256];
+        size_t n;
+
+        if (s->nselected == 0)
+            return td_exec_fail(ctx, err, err_cap, "no rows selected");
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        n = td_sheet_set_selected_expr(s, s->cursor_col, input_arg,
+                                       eerr, sizeof(eerr));
+        if (n == 0)
+            return td_exec_fail(ctx, err, err_cap, "expr failed: %s", eerr);
+        td_set_message(ctx->msg, ctx->msg_cap, "updated %zu selected %s", n,
+                       n == 1 ? "row" : "rows");
+        break;
+    }
+    case TD_CMD_SPLIT_COL_DELIM: {
+        char serr[256];
+        size_t added = 0;
+
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        if (!td_sheet_split_col_delim(s, s->cursor_col, input_arg, &added,
+                                      serr, sizeof(serr)))
+            return td_exec_fail(ctx, err, err_cap, "split failed: %s", serr);
+        td_set_message(ctx->msg, ctx->msg_cap, "split into %zu %s", added,
+                       added == 1 ? "column" : "columns");
+        break;
+    }
+    case TD_CMD_SPLIT_COL_REGEX: {
+        char serr[256];
+        size_t added = 0;
+
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        if (!td_sheet_split_col_regex(s, s->cursor_col, input_arg, &added,
+                                      serr, sizeof(serr)))
+            return td_exec_fail(ctx, err, err_cap, "capture failed: %s", serr);
+        td_set_message(ctx->msg, ctx->msg_cap, "extracted %zu %s", added,
+                       added == 1 ? "column" : "columns");
+        break;
+    }
     case TD_CMD_REDRAW:
         if (ctx->term)
             ctx->term->force_full = true;
@@ -1203,6 +1257,8 @@ static void td_usage(FILE *out)
         "  e / ge                edit cell / set selected cells in column\n"
         "  zd / gzd              clear cell / clear selected cells\n"
         "  a / ga / za           add blank row / N rows / blank column\n"
+        "  = / g=                add computed expr column / set selected by expr\n"
+        "  : / ;                 split column by delimiter / regex capture groups\n"
         "  g\" / z\"               duplicate current row / column in-place\n"
         "  d / gd                delete current row / selected rows (yanks)\n"
         "  y / gy / zy / gzy     yank row / selected rows / cell / selected cells\n"
@@ -1395,6 +1451,38 @@ static void td_handle_command(td_cmd_t cmd, td_exec_ctx_t *ctx,
                              "join (inner/outer/full/diff/append/extend):",
                              "inner");
         return;
+    case TD_CMD_ADD_COL_EXPR:
+        td_prompt_start_kind(prompt, TD_PROMPT_ADD_COL_EXPR,
+                             "add column expr:", "");
+        return;
+    case TD_CMD_SET_COL_EXPR:
+        if (s->nselected == 0) {
+            td_set_message(ctx->msg, ctx->msg_cap, "no rows selected");
+            return;
+        }
+        if (s->ncols == 0 || s->cursor_col >= s->ncols) {
+            td_set_message(ctx->msg, ctx->msg_cap, "no column");
+            return;
+        }
+        td_prompt_start_kind(prompt, TD_PROMPT_SET_COL_EXPR,
+                             "set selected expr:", "");
+        return;
+    case TD_CMD_SPLIT_COL_DELIM:
+        if (s->ncols == 0 || s->cursor_col >= s->ncols) {
+            td_set_message(ctx->msg, ctx->msg_cap, "no column");
+            return;
+        }
+        td_prompt_start_kind(prompt, TD_PROMPT_SPLIT_COL_DELIM,
+                             "split delimiter:", "");
+        return;
+    case TD_CMD_SPLIT_COL_REGEX:
+        if (s->ncols == 0 || s->cursor_col >= s->ncols) {
+            td_set_message(ctx->msg, ctx->msg_cap, "no column");
+            return;
+        }
+        td_prompt_start_kind(prompt, TD_PROMPT_SPLIT_COL_REGEX,
+                             "capture regex:", "");
+        return;
     default:
         (void)td_exec_action(cmd, NULL, ctx, NULL, 0);
         return;
@@ -1421,6 +1509,10 @@ static td_cmd_t td_prompt_to_cmd(td_prompt_kind_t kind)
     case TD_PROMPT_AGGREGATOR:         return TD_CMD_AGGREGATOR;
     case TD_PROMPT_AGGREGATOR_ONE:     return TD_CMD_AGGREGATOR_ONE;
     case TD_PROMPT_JOIN:               return TD_CMD_JOIN;
+    case TD_PROMPT_ADD_COL_EXPR:       return TD_CMD_ADD_COL_EXPR;
+    case TD_PROMPT_SET_COL_EXPR:       return TD_CMD_SET_COL_EXPR;
+    case TD_PROMPT_SPLIT_COL_DELIM:    return TD_CMD_SPLIT_COL_DELIM;
+    case TD_PROMPT_SPLIT_COL_REGEX:    return TD_CMD_SPLIT_COL_REGEX;
     default:                           return TD_CMD_NONE;
     }
 }
@@ -1466,6 +1558,12 @@ static void td_handle_prompt_result(td_prompt_result_t pr, td_prompt_t *prompt,
             what = "aggregator cancelled";
         else if (kind == TD_PROMPT_JOIN)
             what = "join cancelled";
+        else if (kind == TD_PROMPT_ADD_COL_EXPR ||
+                 kind == TD_PROMPT_SET_COL_EXPR)
+            what = "expr cancelled";
+        else if (kind == TD_PROMPT_SPLIT_COL_DELIM ||
+                 kind == TD_PROMPT_SPLIT_COL_REGEX)
+            what = "split cancelled";
         td_prompt_stop(prompt);
         td_set_message(ctx->msg, ctx->msg_cap, "%s", what);
     }

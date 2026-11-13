@@ -357,5 +357,22 @@ void test_input(void)
     TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_JOIN);
     td_prompt_stop(&p);
 
+    /* Phase 5 chords and prompt kinds. */
+    TD_CHECK_INT(td_input_feed(&in, key_char('=')), TD_CMD_ADD_COL_EXPR);
+    TD_CHECK_INT(td_input_feed(&in, key_char(':')), TD_CMD_SPLIT_COL_DELIM);
+    TD_CHECK_INT(td_input_feed(&in, key_char(';')), TD_CMD_SPLIT_COL_REGEX);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('=')), TD_CMD_SET_COL_EXPR);
+
+    td_prompt_start_kind(&p, TD_PROMPT_ADD_COL_EXPR, "add column expr:", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_ADD_COL_EXPR);
+    td_prompt_start_kind(&p, TD_PROMPT_SET_COL_EXPR, "set selected expr:", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SET_COL_EXPR);
+    td_prompt_start_kind(&p, TD_PROMPT_SPLIT_COL_DELIM, "split delimiter:", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SPLIT_COL_DELIM);
+    td_prompt_start_kind(&p, TD_PROMPT_SPLIT_COL_REGEX, "capture regex:", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SPLIT_COL_REGEX);
+    td_prompt_stop(&p);
+
     td_prompt_free(&p);
 }

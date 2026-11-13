@@ -145,4 +145,60 @@ void test_cmdlog(void)
     td_stack_free(&st);
     td_clipboard_free(&clip);
     td_cmdlog_free(&log);
+
+    /* Phase 5 command log recording and replay. */
+    TD_CHECK_INT(td_cmd_from_longname("addcol-expr"), TD_CMD_ADD_COL_EXPR);
+    TD_CHECK_INT(td_cmd_from_longname("setcol-expr"), TD_CMD_SET_COL_EXPR);
+    TD_CHECK_INT(td_cmd_from_longname("split-col"), TD_CMD_SPLIT_COL_DELIM);
+    TD_CHECK_INT(td_cmd_from_longname("capture-col"), TD_CMD_SPLIT_COL_REGEX);
+
+    td_cmdlog_init(&log);
+    td_clipboard_init(&clip);
+    s = make_replay_target();
+    TD_CHECK(td_stack_push(&st, s));
+    quit = false;
+    ctx.stack = &st;
+    ctx.clip = &clip;
+    ctx.cmdlog = &log;
+
+    TD_CHECK(td_exec_action(TD_CMD_RIGHT, NULL, &ctx, err, sizeof(err)));
+    TD_CHECK(td_exec_action(TD_CMD_ADD_COL_EXPR, "qty * 2", &ctx,
+                            err, sizeof(err)));
+    TD_CHECK_INT(s->ncols, 3);
+    TD_CHECK_INT(td_sheet_get_cell(s, 0, 2).as.i, 10);
+    TD_CHECK_INT(td_sheet_get_cell(s, 1, 2).as.i, 24);
+    TD_CHECK(td_exec_action(TD_CMD_SELECT_ROW, NULL, &ctx, err, sizeof(err)));
+    TD_CHECK(td_exec_action(TD_CMD_SET_COL_EXPR, "$2 + 1", &ctx,
+                            err, sizeof(err)));
+    TD_CHECK_INT(td_sheet_get_cell(s, 0, 2).as.i, 11);
+    TD_CHECK_INT(td_sheet_get_cell(s, 1, 2).as.i, 24);
+    TD_CHECK(td_exec_action(TD_CMD_FIRST_COL, NULL, &ctx, err, sizeof(err)));
+    TD_CHECK(td_exec_action(TD_CMD_SPLIT_COL_REGEX, "^([a-z]+)$", &ctx,
+                            err, sizeof(err)));
+    TD_CHECK_INT(s->ncols, 4);
+
+    cl = td_cmdlog_to_sheet(&log);
+    TD_CHECK(cl != NULL);
+    td_stack_free(&st);
+    td_clipboard_free(&clip);
+    td_cmdlog_free(&log);
+
+    td_cmdlog_init(&log);
+    td_clipboard_init(&clip);
+    s = make_replay_target();
+    TD_CHECK(td_stack_push(&st, s));
+    quit = false;
+    ctx.stack = &st;
+    ctx.clip = &clip;
+    ctx.cmdlog = &log;
+    TD_CHECK(td_cmdlog_replay_sheet(cl, &st, replay_cb, &ctx, &quit,
+                                    err, sizeof(err)));
+    TD_CHECK_INT(s->ncols, 4);
+    TD_CHECK_INT(td_sheet_get_cell(s, 0, 3).as.i, 11);
+    TD_CHECK_INT(td_sheet_get_cell(s, 1, 3).as.i, 24);
+    td_sheet_free(cl);
+
+    td_stack_free(&st);
+    td_clipboard_free(&clip);
+    td_cmdlog_free(&log);
 }

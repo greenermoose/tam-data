@@ -354,6 +354,9 @@ static td_cmd_t td_input_single(td_key_t key)
     case 'M': return TD_CMD_MELT;
     case '+': return TD_CMD_AGGREGATOR;
     case '&': return TD_CMD_JOIN;
+    case '=': return TD_CMD_ADD_COL_EXPR;
+    case ':': return TD_CMD_SPLIT_COL_DELIM;
+    case ';': return TD_CMD_SPLIT_COL_REGEX;
     case '[': return TD_CMD_SORT_ASC;
     case ']': return TD_CMD_SORT_DESC;
     case '-': return TD_CMD_HIDE_COL;
@@ -416,6 +419,7 @@ td_cmd_t td_input_feed(td_input_t *in, td_key_t key)
         case '?': return TD_CMD_SEARCH_ALL_BWD;
         case 'd': return TD_CMD_DELETE_SELECTED;
         case 'e': return TD_CMD_EDIT_SELECTED;
+        case '=': return TD_CMD_SET_COL_EXPR;
         case 'a': return TD_CMD_ADD_ROWS;
         case 'y': return TD_CMD_YANK_SELECTED;
         case '"': return TD_CMD_DUP_ROW;
