@@ -8,18 +8,26 @@
 #include "arena.h"
 #include "val.h"
 
+#define TD_AUTO_WIDTH_CAP 40
+#define TD_AUTO_WIDTH_MIN 3
+
 typedef struct {
     char *name;
     td_type_t type;
-    int width;       /* > 0 fixed, 0 hidden, < 0 auto with cap -width */
-    bool is_key;     /* pinned key column */
-    td_val_t *cells; /* row_cap contiguous cells */
+    int width;        /* > 0 fixed, 0 hidden, < 0 auto with cap -width */
+    int cached_width; /* > 0 cached auto-width, 0 dirty */
+    bool is_key;      /* pinned key column */
+    td_val_t *cells;  /* row_cap contiguous cells */
 } td_col_t;
 
 typedef struct {
     char *name;
     char *source_path;
     td_arena_t arena;
+    void *mmap_base;     /* optional mmap backing buffer, unmapped on free */
+    size_t mmap_len;
+    char *buf_base;      /* optional heap backing buffer (stdin/pipes), freed */
+    size_t buf_len;
 
     td_col_t *cols;
     size_t ncols;
@@ -73,6 +81,12 @@ bool td_sheet_rename_col(td_sheet_t *s, size_t col, const char *name);
 void td_sheet_hide_col(td_sheet_t *s, size_t col);
 void td_sheet_toggle_key_col(td_sheet_t *s, size_t col);
 void td_sheet_autosize_col(td_sheet_t *s, size_t col);
+void td_sheet_autosize_all_cols(td_sheet_t *s);
+bool td_sheet_set_col_width(td_sheet_t *s, size_t col, int width);
+void td_sheet_unhide_all_cols(td_sheet_t *s);
+bool td_sheet_move_col(td_sheet_t *s, size_t col, int dir);
+bool td_sheet_jump_value(td_sheet_t *s, int dir);
+bool td_sheet_jump_null(td_sheet_t *s, int dir);
 void td_sheet_ensure_cursor_visible(td_sheet_t *s, int grid_rows,
                                     int grid_cols);
 

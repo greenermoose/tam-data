@@ -22,6 +22,13 @@ endif
 BINDIR   ?= $(PREFIX)/bin
 
 PKG_CONFIG ?= pkg-config
+ifndef LIBTAM_PREFIX
+  ifeq ($(origin LIBTAM_LIBS),undefined)
+    ifneq ($(wildcard $(PREFIX)/include/tam.h),)
+      LIBTAM_PREFIX := $(PREFIX)
+    endif
+  endif
+endif
 ifdef LIBTAM_PREFIX
 LIBTAM_CFLAGS ?= -I$(LIBTAM_PREFIX)/include
 LIBTAM_LIBS   ?= -L$(LIBTAM_PREFIX)/lib -ltam
@@ -43,13 +50,15 @@ BUILD    := build
 BIN      := $(BUILD)/tam-data
 TEST_BIN := $(BUILD)/test_tam-data
 
-SRC := src/arena.c src/val.c src/sheet.c src/term.c src/input.c src/tam-data.c
-DEPS := src/version.h src/utf8.h src/arena.h src/val.h src/sheet.h src/term.h \
-        src/input.h src/tam-data.h
+SRC := src/arena.c src/val.c src/sheet.c src/csv.c src/term.c src/input.c \
+       src/tam-data.c
+DEPS := src/version.h src/utf8.h src/arena.h src/val.h src/sheet.h src/csv.h \
+        src/term.h src/input.h src/tam-data.h
 
 OBJS      := $(SRC:src/%.c=$(BUILD)/obj/%.o)
 TEST_SRCS := tests/test_main.c tests/test_arena.c tests/test_val.c \
-             tests/test_sheet.c tests/test_term.c tests/test_input.c
+             tests/test_sheet.c tests/test_csv.c tests/test_term.c \
+             tests/test_input.c
 TEST_OBJS := $(TEST_SRCS:tests/%.c=$(BUILD)/test/%.o) \
              $(SRC:src/%.c=$(BUILD)/test/src/%.o)
 

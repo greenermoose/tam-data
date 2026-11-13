@@ -3,13 +3,14 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/mman.h>
 
 #include "utf8.h"
 
 #define TD_SHEET_ROW_CHUNK 16
 #define TD_SHEET_COL_CHUNK 8
-#define TD_AUTO_WIDTH_CAP 40
-#define TD_AUTO_WIDTH_MIN 3
+#define TD_WIDTH_SAMPLE_ROWS 1000
+#define TD_WIDTH_VIEWPORT_ROWS 128
 
 td_sheet_t *td_sheet_new(const char *name, const char *source_path)
 {
@@ -36,6 +37,9 @@ void td_sheet_free(td_sheet_t *s)
     free(s->cols);
     free(s->row_order);
     free(s->sel_bits);
+    if (s->mmap_base && s->mmap_len > 0)
+        munmap(s->mmap_base, s->mmap_len);
+    free(s->buf_base);
     td_arena_free(&s->arena);
     free(s);
 }
@@ -146,8 +150,10 @@ size_t td_sheet_add_row(td_sheet_t *s)
         return SIZE_MAX;
 
     row = s->nrows;
-    for (size_t c = 0; c < s->ncols; c++)
+    for (size_t c = 0; c < s->ncols; c++) {
         s->cols[c].cells[row] = TD_VAL_NULL;
+        s->cols[c].cached_width = 0;
+    }
     s->row_order[row] = row;
     s->nrows++;
     return row;
@@ -165,6 +171,7 @@ bool td_sheet_set_cell(td_sheet_t *s, size_t row, size_t col, td_val_t v)
     if (!s || row >= s->nrows || col >= s->ncols)
         return false;
     s->cols[col].cells[row] = v;
+    s->cols[col].cached_width = 0;
     return true;
 }
 
@@ -298,12 +305,65 @@ static int td_header_width(const td_col_t *c)
     return (int)td_utf8_width(buf);
 }
 
+static int td_measure_cell_width(td_val_t v, td_type_t type)
+{
+    char buf[512];
+    size_t n = td_val_format(v, type, buf, sizeof(buf));
+
+    if (n >= sizeof(buf))
+        n = sizeof(buf) - 1;
+    buf[n] = '\0';
+    return (int)td_utf8_width(buf);
+}
+
+static int td_compute_col_width(const td_sheet_t *s, size_t col, int cap)
+{
+    const td_col_t *c = &s->cols[col];
+    int width = td_header_width(c);
+    size_t sample = s->nrows < TD_WIDTH_SAMPLE_ROWS
+                        ? s->nrows
+                        : TD_WIDTH_SAMPLE_ROWS;
+
+    for (size_t r = 0; r < sample; r++) {
+        int w = td_measure_cell_width(c->cells[r], c->type);
+
+        if (w > width)
+            width = w;
+        if (cap > 0 && width >= cap)
+            return cap;
+    }
+
+    if (s->nrows > TD_WIDTH_SAMPLE_ROWS && s->row_order) {
+        size_t start = s->top_row < s->nrows ? s->top_row : 0;
+        size_t end = start + TD_WIDTH_VIEWPORT_ROWS;
+
+        if (end > s->nrows)
+            end = s->nrows;
+        for (size_t vr = start; vr < end; vr++) {
+            size_t phys = s->row_order[vr];
+
+            if (phys < s->nrows) {
+                int w = td_measure_cell_width(c->cells[phys], c->type);
+
+                if (w > width)
+                    width = w;
+                if (cap > 0 && width >= cap)
+                    return cap;
+            }
+        }
+    }
+
+    if (width < TD_AUTO_WIDTH_MIN)
+        width = TD_AUTO_WIDTH_MIN;
+    if (cap > 0 && width > cap)
+        width = cap;
+    return width;
+}
+
 int td_sheet_col_width(const td_sheet_t *s, size_t col)
 {
     td_col_t *c;
     int cap;
-    int width;
-    char buf[512];
 
     if (!s || col >= s->ncols)
         return 0;
@@ -316,22 +376,11 @@ int td_sheet_col_width(const td_sheet_t *s, size_t col)
     cap = -c->width;
     if (cap <= 0)
         cap = TD_AUTO_WIDTH_CAP;
-    width = td_header_width(c);
-    for (size_t r = 0; r < s->nrows; r++) {
-        size_t n = td_val_format(c->cells[r], c->type, buf, sizeof(buf));
-        int w;
+    if (c->cached_width > 0)
+        return c->cached_width > cap ? cap : c->cached_width;
 
-        if (n >= sizeof(buf))
-            n = sizeof(buf) - 1;
-        w = (int)td_utf8_width(buf);
-        if (w > width)
-            width = w;
-        if (width >= cap)
-            return cap;
-    }
-    if (width < TD_AUTO_WIDTH_MIN)
-        width = TD_AUTO_WIDTH_MIN;
-    return width > cap ? cap : width;
+    c->cached_width = td_compute_col_width(s, col, cap);
+    return c->cached_width;
 }
 
 static td_val_t td_cell_as_type(td_sheet_t *s, td_val_t v, td_type_t type)
@@ -377,6 +426,7 @@ bool td_sheet_set_col_type(td_sheet_t *s, size_t col, td_type_t type)
         s->cols[col].cells[r] = td_cell_as_type(s, s->cols[col].cells[r],
                                                 type);
     s->cols[col].type = type;
+    s->cols[col].cached_width = 0;
     return true;
 }
 
@@ -390,6 +440,7 @@ bool td_sheet_rename_col(td_sheet_t *s, size_t col, const char *name)
     if (!copy)
         return false;
     s->cols[col].name = copy;
+    s->cols[col].cached_width = 0;
     return true;
 }
 
@@ -398,6 +449,7 @@ void td_sheet_hide_col(td_sheet_t *s, size_t col)
     if (!s || col >= s->ncols)
         return;
     s->cols[col].width = 0;
+    s->cols[col].cached_width = 0;
     if (s->cursor_col == col) {
         size_t next = td_sheet_next_visible_col(s, col, 1);
 
@@ -418,13 +470,164 @@ void td_sheet_toggle_key_col(td_sheet_t *s, size_t col)
 
 void td_sheet_autosize_col(td_sheet_t *s, size_t col)
 {
+    int exact;
+
     if (!s || col >= s->ncols)
         return;
-    if (s->cols[col].width == 0)
+    exact = td_compute_col_width(s, col, 0);
+    if (s->cols[col].width > 0 && s->cols[col].width == exact &&
+        exact > TD_AUTO_WIDTH_CAP) {
         s->cols[col].width = -TD_AUTO_WIDTH_CAP;
-    s->cols[col].width = td_sheet_col_width(s, col);
-    if (s->cols[col].width <= 0)
-        s->cols[col].width = TD_AUTO_WIDTH_MIN;
+    } else {
+        s->cols[col].width = exact;
+    }
+    s->cols[col].cached_width = 0;
+}
+
+void td_sheet_autosize_all_cols(td_sheet_t *s)
+{
+    if (!s)
+        return;
+    for (size_t c = 0; c < s->ncols; c++) {
+        if (s->cols[c].width != 0)
+            td_sheet_autosize_col(s, c);
+    }
+}
+
+bool td_sheet_set_col_width(td_sheet_t *s, size_t col, int width)
+{
+    if (!s || col >= s->ncols || width < 0)
+        return false;
+    if (width == 0) {
+        td_sheet_hide_col(s, col);
+        return true;
+    }
+    s->cols[col].width = width;
+    s->cols[col].cached_width = 0;
+    return true;
+}
+
+void td_sheet_unhide_all_cols(td_sheet_t *s)
+{
+    if (!s)
+        return;
+    for (size_t c = 0; c < s->ncols; c++) {
+        if (s->cols[c].width == 0) {
+            s->cols[c].width = -TD_AUTO_WIDTH_CAP;
+            s->cols[c].cached_width = 0;
+        }
+    }
+}
+
+bool td_sheet_move_col(td_sheet_t *s, size_t col, int dir)
+{
+    size_t target = SIZE_MAX;
+    td_col_t tmp;
+    bool key;
+
+    if (!s || col >= s->ncols || dir == 0 || s->cols[col].width == 0)
+        return false;
+
+    key = s->cols[col].is_key;
+    if (dir < 0) {
+        for (size_t c = col; c-- > 0;) {
+            if (s->cols[c].width != 0 && s->cols[c].is_key == key) {
+                target = c;
+                break;
+            }
+        }
+    } else {
+        for (size_t c = col + 1; c < s->ncols; c++) {
+            if (s->cols[c].width != 0 && s->cols[c].is_key == key) {
+                target = c;
+                break;
+            }
+        }
+    }
+    if (target == SIZE_MAX)
+        return false;
+
+    tmp = s->cols[col];
+    s->cols[col] = s->cols[target];
+    s->cols[target] = tmp;
+
+    if (s->cursor_col == col)
+        s->cursor_col = target;
+    else if (s->cursor_col == target)
+        s->cursor_col = col;
+    return true;
+}
+
+static td_val_t td_sheet_eval_vis_cell(const td_sheet_t *s, size_t vis_row,
+                                       size_t col)
+{
+    size_t phys = s->row_order[vis_row];
+    td_val_t v = td_sheet_get_cell(s, phys, col);
+    td_type_t type = s->cols[col].type;
+
+    if (v.type == TD_TYPE_ANY && type != TD_TYPE_ANY)
+        v = td_val_parse(v.as.s, type);
+    return v;
+}
+
+static bool td_val_is_blank(td_val_t v)
+{
+    if (v.type == TD_TYPE_NULL)
+        return true;
+    if (v.type == TD_TYPE_ANY || v.type == TD_TYPE_STR)
+        return !v.as.s.data || v.as.s.len == 0;
+    return false;
+}
+
+bool td_sheet_jump_value(td_sheet_t *s, int dir)
+{
+    td_val_t cur;
+
+    if (!s || s->nrows == 0 || s->ncols == 0 || dir == 0 ||
+        s->cursor_row >= s->nrows || s->cursor_col >= s->ncols)
+        return false;
+
+    cur = td_sheet_eval_vis_cell(s, s->cursor_row, s->cursor_col);
+    if (dir > 0) {
+        for (size_t r = s->cursor_row + 1; r < s->nrows; r++) {
+            if (td_val_cmp(td_sheet_eval_vis_cell(s, r, s->cursor_col), cur) != 0) {
+                s->cursor_row = r;
+                return true;
+            }
+        }
+    } else {
+        for (size_t r = s->cursor_row; r-- > 0;) {
+            if (td_val_cmp(td_sheet_eval_vis_cell(s, r, s->cursor_col), cur) != 0) {
+                s->cursor_row = r;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+bool td_sheet_jump_null(td_sheet_t *s, int dir)
+{
+    if (!s || s->nrows == 0 || s->ncols == 0 || dir == 0 ||
+        s->cursor_row >= s->nrows || s->cursor_col >= s->ncols)
+        return false;
+
+    if (dir > 0) {
+        for (size_t r = s->cursor_row + 1; r < s->nrows; r++) {
+            if (td_val_is_blank(td_sheet_eval_vis_cell(s, r, s->cursor_col))) {
+                s->cursor_row = r;
+                return true;
+            }
+        }
+    } else {
+        for (size_t r = s->cursor_row; r-- > 0;) {
+            if (td_val_is_blank(td_sheet_eval_vis_cell(s, r, s->cursor_col))) {
+                s->cursor_row = r;
+                return true;
+            }
+        }
+    }
+    return false;
 }
 
 static size_t td_first_regular_col(const td_sheet_t *s)
@@ -450,20 +653,20 @@ void td_sheet_ensure_cursor_visible(td_sheet_t *s, int grid_rows,
     if (s->nrows == 0) {
         s->cursor_row = 0;
         s->top_row = 0;
-        return;
-    }
-    if (s->cursor_row >= s->nrows)
-        s->cursor_row = s->nrows - 1;
+    } else {
+        if (s->cursor_row >= s->nrows)
+            s->cursor_row = s->nrows - 1;
 
-    if (grid_rows < 1)
-        grid_rows = 1;
-    if (s->cursor_row < s->top_row)
-        s->top_row = s->cursor_row;
-    else if (s->cursor_row >= s->top_row + (size_t)grid_rows)
-        s->top_row = s->cursor_row - (size_t)grid_rows + 1;
-    if (s->nrows >= (size_t)grid_rows &&
-        s->top_row + (size_t)grid_rows > s->nrows)
-        s->top_row = s->nrows - (size_t)grid_rows;
+        if (grid_rows < 1)
+            grid_rows = 1;
+        if (s->cursor_row < s->top_row)
+            s->top_row = s->cursor_row;
+        else if (s->cursor_row >= s->top_row + (size_t)grid_rows)
+            s->top_row = s->cursor_row - (size_t)grid_rows + 1;
+        if (s->nrows >= (size_t)grid_rows &&
+            s->top_row + (size_t)grid_rows > s->nrows)
+            s->top_row = s->nrows - (size_t)grid_rows;
+    }
 
     if (s->ncols == 0) {
         s->cursor_col = 0;

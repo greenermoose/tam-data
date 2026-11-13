@@ -71,10 +71,20 @@ typedef enum {
     TD_CMD_LAST_ROW,
     TD_CMD_PAGE_DOWN,
     TD_CMD_PAGE_UP,
+    TD_CMD_NEXT_VALUE,
+    TD_CMD_PREV_VALUE,
+    TD_CMD_NEXT_NULL,
+    TD_CMD_PREV_NULL,
+    TD_CMD_MOVE_COL_LEFT,
+    TD_CMD_MOVE_COL_RIGHT,
     TD_CMD_HIDE_COL,
     TD_CMD_TOGGLE_KEY_COL,
     TD_CMD_AUTOSIZE_COL,
+    TD_CMD_AUTOSIZE_ALL_COLS,
+    TD_CMD_SET_COL_WIDTH,
+    TD_CMD_UNHIDE_ALL_COLS,
     TD_CMD_RENAME_COL,
+    TD_CMD_SAVE_SHEET,
     TD_CMD_TYPE_ANY,
     TD_CMD_TYPE_STR,
     TD_CMD_TYPE_INT,
@@ -108,8 +118,16 @@ typedef enum {
     TD_PROMPT_CANCEL
 } td_prompt_result_t;
 
+typedef enum {
+    TD_PROMPT_NONE = 0,
+    TD_PROMPT_RENAME_COL,
+    TD_PROMPT_COL_WIDTH,
+    TD_PROMPT_SAVE_SHEET
+} td_prompt_kind_t;
+
 typedef struct {
     bool active;
+    td_prompt_kind_t kind;
     char *label;
     char *buf;
     size_t len;
@@ -120,7 +138,10 @@ typedef struct {
 void td_prompt_init(td_prompt_t *p);
 void td_prompt_free(td_prompt_t *p);
 void td_prompt_start(td_prompt_t *p, const char *label, const char *initial);
+void td_prompt_start_kind(td_prompt_t *p, td_prompt_kind_t kind,
+                          const char *label, const char *initial);
 void td_prompt_stop(td_prompt_t *p);
+td_prompt_kind_t td_prompt_kind(const td_prompt_t *p);
 const char *td_prompt_label(const td_prompt_t *p);
 const char *td_prompt_text(const td_prompt_t *p);
 size_t td_prompt_cursor(const td_prompt_t *p);

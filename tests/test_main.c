@@ -14,6 +14,7 @@ int main(void)
     test_arena();
     test_val();
     test_sheet();
+    test_csv();
     test_term();
     test_input();
 

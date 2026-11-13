@@ -15,6 +15,107 @@ static td_sheet_t *make_sheet(void)
     return s;
 }
 
+static void test_sheet_phase1_nav_and_cols(void)
+{
+    td_sheet_t *s = td_sheet_new("nav", "");
+
+    TD_CHECK(s != NULL);
+    if (!s)
+        return;
+
+    td_sheet_add_col(s, "k", TD_TYPE_STR, -TD_AUTO_WIDTH_CAP);
+    td_sheet_add_col(s, "n", TD_TYPE_INT, -TD_AUTO_WIDTH_CAP);
+    td_sheet_add_col(s, "note", TD_TYPE_ANY, -TD_AUTO_WIDTH_CAP);
+
+    for (int i = 0; i < 6; i++)
+        TD_CHECK_INT(td_sheet_add_row(s), (size_t)i);
+
+    /* Values in col 1 (int): [10, 10, 20, NULL, 20, 30], with raw ANY on row 1. */
+    td_sheet_set_cell(s, 0, 1, td_val_parse(td_slice_from_cstr("10"), TD_TYPE_INT));
+    td_sheet_set_cell(s, 1, 1, td_val_parse(td_slice_from_cstr("010"), TD_TYPE_ANY));
+    td_sheet_set_cell(s, 2, 1, td_val_parse(td_slice_from_cstr("20"), TD_TYPE_INT));
+    /* row 3 stays TD_VAL_NULL */
+    td_sheet_set_cell(s, 4, 1, td_val_parse(td_slice_from_cstr(""), TD_TYPE_ANY));
+    td_sheet_set_cell(s, 5, 1, td_val_parse(td_slice_from_cstr("30"), TD_TYPE_INT));
+
+    /* Value jumps (> and <). */
+    s->cursor_col = 1;
+    s->cursor_row = 0;
+    TD_CHECK(td_sheet_jump_value(s, 1));
+    TD_CHECK_INT(s->cursor_row, 2); /* skipped "010" coerced to 10 */
+    TD_CHECK(td_sheet_jump_value(s, 1));
+    TD_CHECK_INT(s->cursor_row, 3); /* NULL is distinct from 20 */
+    TD_CHECK(td_sheet_jump_value(s, 1));
+    TD_CHECK_INT(s->cursor_row, 5); /* row 4 is also blank/NULL */
+    TD_CHECK(!td_sheet_jump_value(s, 1));
+    TD_CHECK_INT(s->cursor_row, 5);
+    TD_CHECK(td_sheet_jump_value(s, -1));
+    TD_CHECK_INT(s->cursor_row, 4);
+
+    /* Blank jumps (} and {). */
+    s->cursor_row = 0;
+    TD_CHECK(td_sheet_jump_null(s, 1));
+    TD_CHECK_INT(s->cursor_row, 3);
+    TD_CHECK(td_sheet_jump_null(s, 1));
+    TD_CHECK_INT(s->cursor_row, 4);
+    TD_CHECK(!td_sheet_jump_null(s, 1));
+    TD_CHECK(td_sheet_jump_null(s, -1));
+    TD_CHECK_INT(s->cursor_row, 3);
+    TD_CHECK(!td_sheet_jump_null(s, -1));
+
+    /* Column reordering skipping hidden middle column. */
+    td_sheet_hide_col(s, 1);
+    s->cursor_col = 0;
+    TD_CHECK(td_sheet_move_col(s, 0, 1));
+    TD_CHECK_INT(s->cursor_col, 2);
+    TD_CHECK_STR(s->cols[2].name, "k");
+    TD_CHECK_STR(s->cols[0].name, "note");
+    TD_CHECK(!td_sheet_move_col(s, 2, 1)); /* already rightmost visible */
+    TD_CHECK(td_sheet_move_col(s, 2, -1));
+    TD_CHECK_INT(s->cursor_col, 0);
+    TD_CHECK_STR(s->cols[0].name, "k");
+
+    /* Moving a regular column does not cross a pinned key column boundary. */
+    s->cols[0].is_key = true;
+    TD_CHECK(!td_sheet_move_col(s, 2, -1));
+    TD_CHECK(!td_sheet_move_col(s, 0, 1));
+    s->cols[0].is_key = false;
+
+    /* Unhide all, set_col_width, autosize (including >40 toggle), autosize_all. */
+    td_sheet_unhide_all_cols(s);
+    TD_CHECK_INT(s->cols[1].width, -TD_AUTO_WIDTH_CAP);
+
+    TD_CHECK(td_sheet_set_col_width(s, 0, 14));
+    TD_CHECK_INT(td_sheet_col_width(s, 0), 14);
+    TD_CHECK(td_sheet_set_col_width(s, 0, 0));
+    TD_CHECK_INT(s->cols[0].width, 0);
+    TD_CHECK(!td_sheet_set_col_width(s, 0, -1));
+
+    const char *long_txt =
+        "01234567890123456789012345678901234567890123456789"; /* 50 chars */
+    td_sheet_set_cell(s, 0, 2, td_val_parse(td_slice_from_cstr(long_txt), TD_TYPE_STR));
+    TD_CHECK_INT(td_sheet_col_width(s, 2), TD_AUTO_WIDTH_CAP);
+    TD_CHECK_INT(s->cols[2].cached_width, TD_AUTO_WIDTH_CAP);
+
+    /* Mutating cell invalidates cached_width. */
+    td_sheet_set_cell(s, 1, 2, td_val_parse(td_slice_from_cstr("hi"), TD_TYPE_STR));
+    TD_CHECK_INT(s->cols[2].cached_width, 0);
+
+    /* Underscore autosizes uncapped, then toggles back to -TD_AUTO_WIDTH_CAP. */
+    td_sheet_autosize_col(s, 2);
+    TD_CHECK_INT(s->cols[2].width, 50);
+    td_sheet_autosize_col(s, 2);
+    TD_CHECK_INT(s->cols[2].width, -TD_AUTO_WIDTH_CAP);
+
+    /* g_ autosizes visible columns while leaving hidden col 0 hidden. */
+    td_sheet_autosize_all_cols(s);
+    TD_CHECK_INT(s->cols[0].width, 0);
+    TD_CHECK(s->cols[1].width > 0);
+    TD_CHECK_INT(s->cols[2].width, 50);
+
+    td_sheet_free(s);
+}
+
 void test_sheet(void)
 {
     td_sheet_t *s = make_sheet();
@@ -137,4 +238,6 @@ void test_sheet(void)
     td_sheet_free(second);
     TD_CHECK(td_stack_active(&st) == s);
     td_stack_free(&st);
+
+    test_sheet_phase1_nav_and_cols();
 }

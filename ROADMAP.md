@@ -2,10 +2,7 @@
 
 This document outlines the architectural plan and phased roadmap for `tam-data`: a pure-C, zero-Python rewrite of [VisiData](https://www.visidata.org/) built on the Tam C libraries (`libtam`) and designed to run natively on any Tamlinux system—including bare Linux virtual terminals (`TERM=linux`).
 
-**Current implementation:** v0.1.0 is a built-in demo. CSV/TSV input and
-output, cell editing, and analytical workflows below are planned. Performance
-figures in this roadmap are targets; no startup, memory, or file-loading
-benchmarks have been published for `tam-data`.
+**Current implementation:** v0.2.0 implements CSV/TSV loading (disk files and piped `stdin`), grid navigation, column controls, and atomic CSV/TSV saving alongside the built-in demo. Cell editing, regex search, filtering, sorting, and analytical workflows below are planned. Performance figures in this roadmap are targets; no startup, memory, or file-loading benchmarks have been published for `tam-data`.
 
 ---
 
@@ -20,10 +17,10 @@ benchmarks have been published for `tam-data`.
 3. **Fast Startup & Low Memory Footprint (Targets, Unmeasured):**
    - Aim for a `0–2 ms` startup; the measurement method and cold/warm cache
      conditions still need to be defined and benchmarked.
-   - Plan arena-allocated and `mmap`-backed string slices for raw tabular
-     data to reduce per-cell allocation. The arena exists; file mapping and
-     CSV/TSV loading are not yet implemented. Large-file loading time and
-     memory use remain unmeasured.
+   - Arena-allocated and `mmap`-backed string slices for raw tabular
+     data to reduce per-cell allocation. Both the arena and `mmap`-backed
+     CSV/TSV loader are implemented; large-file loading time and memory use
+     remain unmeasured.
 4. **VisiData Ergonomics & Muscle Memory:**
    - Preserve VisiData's modal keybindings (`g`, `z` prefixes), multi-sheet stack (`S`, `C`, `I`, `F`, `O`), non-destructive exploration, and command discoverability (`Ctrl+H`, `Space`).
 
@@ -36,7 +33,7 @@ benchmarks have been published for `tam-data`.
 | Version | Phase | Milestone Scope | Status |
 | :--- | :--- | :--- | :--- |
 | **`v0.1.0`** | **Phase 0** | Foundation, build/sanitizers, VT terminal engine, core data model, demo shell | Completed |
-| **`v0.2.0`** | **Phase 1** | Native CSV/TSV parser, viewport rendering, grid navigation, atomic saver (**MVP**) | In Progress |
+| **`v0.2.0`** | **Phase 1** | Native CSV/TSV parser, viewport rendering, grid navigation, atomic saver (**MVP**) | Completed |
 | **`v0.3.0`** | **Phase 2** | Row selection bitset, regex search, filtering, and typed multi-column sorting | Planned |
 | **`v0.4.0`** | **Phase 3** | In-place editing, clipboard/yank ring, undo/redo, command replay log | Planned |
 | **`v0.5.0`** | **Phase 4** | Frequency tables (`F`), aggregation summaries (`+`), describe sheet (`I`), pivot/melt, joins | Planned |
@@ -70,18 +67,18 @@ benchmarks have been published for `tam-data`.
 
 **Goal:** Open any CSV or TSV file from disk or `stdin`, navigate it fluidly in a VT or terminal, inspect columns, and save changes back to disk.
 
-- [ ] **Streaming & `mmap` CSV/TSV Parser:**
+- [x] **Streaming & `mmap` CSV/TSV Parser:**
   - RFC 4180 compliant CSV parser (quoted fields, escaped quotes, embedded newlines, configurable delimiters) and fast TSV scanner.
   - Support reading from file paths and piped `stdin` (`cat data.csv | tam-data`).
-- [ ] **Sheet Viewport & Status Bar Renderer:**
+- [x] **Sheet Viewport & Status Bar Renderer:**
   - Dynamic column width calculation with manual override (`_`), column truncation indicators (`…`), and type sigils in headers (`#` int, `%` float, `$` currency, `@` date, `~` string).
   - Pinned key columns (`!`) anchored on the left during horizontal scrolling.
   - VisiData-style status bar displaying sheet stack depth, sheet name, current row/col, total rows, selection count, pending keystrokes, and status messages.
-- [ ] **Core Navigation & Column Controls:**
+- [x] **Core Navigation & Column Controls:**
   - Cursor movement: `h`/`j`/`k`/`l`, arrow keys, page up/down (`Ctrl+F`/`Ctrl+B`), home/end (`gh`/`gj`/`gk`/`gl`, `gg`/`G`).
   - Value navigation: Jump to next/previous distinct value in column (`<`, `>`) or blank cell (`{`, `}`).
   - Column manipulation: Hide column (`-`), adjust width (`_`, `g_`), rename column (`^`), reorder columns (`H`/`L`), and set column types (`#`, `%`, `$`, `@`, `~`).
-- [ ] **Atomic CSV/TSV Saver (`Ctrl+S`):**
+- [x] **Atomic CSV/TSV Saver (`Ctrl+S`):**
   - Direct export of the current sheet (respecting visible columns and row ordering) to `.tsv` or `.csv` via `tam_fs_write_atomic`.
 
 ---

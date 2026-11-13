@@ -5,10 +5,11 @@ A terminal spreadsheet multitool written in C, inspired by
 exploration and editing with a small runtime footprint and first-class Linux
 virtual console support, without a Python runtime.
 
-**Early development: the current version, 0.1.0, runs a built-in demo only.**
-It does not yet open or save CSV/TSV files, accept piped data, or edit cells.
-CSV/TSV loading and saving are the next milestone. The long-term ambition is
-VisiData's core workflows; feature parity is not a current capability.
+**Early development: the current version, 0.2.0, implements the Phase 1 CSV/TSV MVP.**
+It opens and saves CSV/TSV files, accepts piped `stdin`, and supports grid and
+column navigation. Search, filtering, sorting, and cell editing are the next
+milestones. The long-term ambition is VisiData's core workflows; full feature
+parity is not a current capability.
 
 ![tam-data displaying its built-in demo sheet](docs/images/demo.png)
 
@@ -18,16 +19,21 @@ name column, and the row-selection status bar. See
 
 ## What works today
 
-- Grid navigation with arrow keys or `h`/`j`/`k`/`l`, paging, and row/column jumps.
-- Row selection, column hiding, renaming, autosizing, pinning, and type changes
-  on the demo data.
+- Loading CSV/TSV files via `mmap` and piped `stdin` (`cat data.csv | tam-data`)
+  with `-d`/`--delimiter`, `--csv`, `--tsv`, and `--no-header` options.
+- Grid navigation with arrow keys or `h`/`j`/`k`/`l`, paging, row/column jumps,
+  distinct-value jumps (`<`/`>`), and blank-cell jumps (`{`/`}`).
+- Row selection, column hiding/unhiding (`-`/`gv`), reordering (`H`/`L`),
+  renaming (`^`), autosizing/manual width (`_`/`g_`/`z_`), pinning (`!`),
+  and type changes (`#`/`%`/`$`/`@`/`~`/`z~`).
+- Atomic CSV/TSV saving (`Ctrl+S`) via `tam_fs_write_atomic`.
 - Typed values, sheet-stack infrastructure, a prompt editor, and a terminal
   renderer with Linux console and modern terminal profiles.
 - Strict C11 compilation and an AddressSanitizer/UndefinedBehaviorSanitizer
   test suite.
 
 See [the roadmap](ROADMAP.md) for planned features and
-[the Phase 1 workplan](plans/P1-WORKPLAN.md) for the CSV/TSV milestone.
+[the Phase 1 workplan](plans/P1-WORKPLAN.md) for the CSV/TSV MVP specification.
 
 ## Build on Linux
 
@@ -96,16 +102,15 @@ The demo contains eight built-in rows; no input file is required.
 | `_` / `^` / `-` | Autosize / rename / hide the current column |
 | `q` | Close the sheet and exit |
 
-`./build/tam-data --help` lists further controls. Changes affect the demo in
-memory and are discarded on exit; saving is not implemented yet.
+`./build/tam-data --help` lists further controls. Use `Ctrl+S` to save the
+current sheet atomically to a `.csv` or `.tsv` file.
 
 ## Performance goals
 
 Fast startup and low memory use are goals, not benchmark results. Startup
 latency, peak resident memory, and large-file performance have not been
-measured for this project. The planned arena/mmap-backed CSV/TSV path is
-not implemented yet. The small demo and passing unit tests do not establish
-large-file performance.
+measured for this project. Although the arena and `mmap`-backed CSV/TSV loader
+are implemented, passing unit tests do not establish large-file performance.
 
 ## License and development provenance
 

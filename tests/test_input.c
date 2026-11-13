@@ -118,6 +118,25 @@ void test_input(void)
     TD_CHECK_INT(td_input_feed(&in, (td_key_t){ TD_KEY_PGDN, 0 }),
                  TD_CMD_PAGE_DOWN);
 
+    /* Phase 1 single-key and prefix chords. */
+    TD_CHECK_INT(td_input_feed(&in, key_char('<')), TD_CMD_PREV_VALUE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('>')), TD_CMD_NEXT_VALUE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('{')), TD_CMD_PREV_NULL);
+    TD_CHECK_INT(td_input_feed(&in, key_char('}')), TD_CMD_NEXT_NULL);
+    TD_CHECK_INT(td_input_feed(&in, key_char('H')), TD_CMD_MOVE_COL_LEFT);
+    TD_CHECK_INT(td_input_feed(&in, key_char('L')), TD_CMD_MOVE_COL_RIGHT);
+    TD_CHECK_INT(td_input_feed(&in, key_char(19)), TD_CMD_SAVE_SHEET);
+
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('_')), TD_CMD_AUTOSIZE_ALL_COLS);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('v')), TD_CMD_UNHIDE_ALL_COLS);
+    TD_CHECK_INT(td_input_feed(&in, key_char('z')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('_')), TD_CMD_SET_COL_WIDTH);
+    TD_CHECK_INT(td_input_feed(&in, key_char('z')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('~')), TD_CMD_TYPE_ANY);
+    TD_CHECK_STR(td_input_pending(&in), "");
+
     td_prompt_init(&p);
     td_prompt_start(&p, "rename:", "abc");
     TD_CHECK(p.active);
@@ -182,5 +201,14 @@ void test_input(void)
     TD_CHECK_INT(td_prompt_cursor(&p), 0);
     TD_CHECK_INT(td_prompt_key(&p, key_char(11)), TD_PROMPT_CHANGED);
     TD_CHECK_STR(td_prompt_text(&p), "");
+
+    td_prompt_start_kind(&p, TD_PROMPT_COL_WIDTH, "column width:", "12");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_COL_WIDTH);
+    TD_CHECK_STR(td_prompt_text(&p), "12");
+    td_prompt_start_kind(&p, TD_PROMPT_SAVE_SHEET, "save to:", "out.csv");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SAVE_SHEET);
+    td_prompt_stop(&p);
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_NONE);
+
     td_prompt_free(&p);
 }

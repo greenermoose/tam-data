@@ -127,7 +127,7 @@ void test_term(void)
     if (!s)
         return;
     TD_CHECK(td_stack_push(&st, s));
-    TD_CHECK_INT(td_term_init(&t, 10, 40, "linux", "en_US.UTF-8"), 0);
+    TD_CHECK_INT(td_term_init(&t, 10, 80, "linux", "en_US.UTF-8"), 0);
     memset(&view, 0, sizeof(view));
     view.message = "hello";
     view.pending = "g";
@@ -141,10 +141,21 @@ void test_term(void)
     TD_CHECK_INT(td_term_back_cell(&t, 0, 9).ch, 'q');
     TD_CHECK_INT(td_term_back_cell(&t, 1, 0).ch, 'A');
     TD_CHECK_INT(td_term_back_cell(&t, 1, 1).ch, 'l');
+    /* Numeric column qty (x=7, width=5) right-aligns "3" at x=11. */
+    TD_CHECK_INT(td_term_back_cell(&t, 1, 7).ch, ' ');
+    TD_CHECK_INT(td_term_back_cell(&t, 1, 11).ch, '3');
     TD_CHECK_INT(td_term_back_cell(&t, 2, 0).ch, 'B');
+    TD_CHECK_INT(td_term_back_cell(&t, 2, 11).ch, '4');
+
+    /* Status bar: "[1/1] demo | r1 c1:name" (len 23), center "hello" at 25. */
     TD_CHECK_INT(td_term_back_cell(&t, 9, 0).ch, '[');
     TD_CHECK_INT(td_term_back_cell(&t, 9, 1).ch, '1');
-    TD_CHECK_INT(td_term_back_cell(&t, 9, 12).ch, 'h');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 13).ch, 'r');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 14).ch, '1');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 16).ch, 'c');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 17).ch, '1');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 19).ch, 'n');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 25).ch, 'h');
 
     /* Selection styling and cursor-cell reverse video. */
     td_sheet_select_row(s, 0);
@@ -157,11 +168,38 @@ void test_term(void)
     TD_CHECK(c.attr & TD_ATTR_REV);
     TD_CHECK(c.attr & TD_ATTR_BOLD);
 
-    /* Cursor column header is highlighted. */
+    /* Cursor column header is highlighted and status bar reflects r2 c2:qty. */
+    s->cursor_row = 1;
     s->cursor_col = 1;
+    td_sheet_set_cell(s, 1, 1,
+                      td_val_parse(td_slice_from_cstr("oops"), TD_TYPE_ANY));
     td_view_render(&t, &st, &view);
     TD_CHECK(td_term_back_cell(&t, 0, 7).attr & TD_ATTR_REV);
     TD_CHECK(!(td_term_back_cell(&t, 0, 0).attr & TD_ATTR_REV));
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 14).ch, '2');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 17).ch, '2');
+    TD_CHECK_INT(td_term_back_cell(&t, 9, 19).ch, 'q');
+    /* Unselected #ERR cell renders red bold "#ERR" left-aligned at x=7. */
+    c = td_term_back_cell(&t, 2, 7);
+    TD_CHECK_INT(c.ch, '#');
+    TD_CHECK_INT(c.fg, 1);
+    TD_CHECK(c.attr & TD_ATTR_BOLD);
+    TD_CHECK_INT(td_term_back_cell(&t, 2, 8).ch, 'E');
+    TD_CHECK_INT(td_term_back_cell(&t, 2, 10).ch, 'R');
+
+    /* Empty sheet coordinates show r0 c0. */
+    td_sheet_t *empty = td_sheet_new("empty", "");
+    TD_CHECK(empty != NULL);
+    if (empty) {
+        TD_CHECK(td_stack_push(&st, empty));
+        td_view_render(&t, &st, &view);
+        TD_CHECK_INT(td_term_back_cell(&t, 9, 1).ch, '2');
+        TD_CHECK_INT(td_term_back_cell(&t, 9, 14).ch, 'r');
+        TD_CHECK_INT(td_term_back_cell(&t, 9, 15).ch, '0');
+        TD_CHECK_INT(td_term_back_cell(&t, 9, 17).ch, 'c');
+        TD_CHECK_INT(td_term_back_cell(&t, 9, 18).ch, '0');
+        td_sheet_free(td_stack_pop(&st));
+    }
 
     td_term_close(&t);
     td_stack_free(&st);

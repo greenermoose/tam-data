@@ -319,7 +319,13 @@ static td_cmd_t td_input_single(td_key_t key)
     case 'j': return TD_CMD_DOWN;
     case 'k': return TD_CMD_UP;
     case 'l': return TD_CMD_RIGHT;
+    case 'H': return TD_CMD_MOVE_COL_LEFT;
+    case 'L': return TD_CMD_MOVE_COL_RIGHT;
     case 'G': return TD_CMD_LAST_ROW;
+    case '<': return TD_CMD_PREV_VALUE;
+    case '>': return TD_CMD_NEXT_VALUE;
+    case '{': return TD_CMD_PREV_NULL;
+    case '}': return TD_CMD_NEXT_NULL;
     case 'q': return TD_CMD_POP_SHEET;
     case 's': return TD_CMD_SELECT_ROW;
     case 'u': return TD_CMD_UNSELECT_ROW;
@@ -336,6 +342,7 @@ static td_cmd_t td_input_single(td_key_t key)
     case 2:   return TD_CMD_PAGE_UP;    /* Ctrl+B */
     case 6:   return TD_CMD_PAGE_DOWN;  /* Ctrl+F */
     case 12:  return TD_CMD_REDRAW;     /* Ctrl+L */
+    case 19:  return TD_CMD_SAVE_SHEET; /* Ctrl+S */
     default:  return TD_CMD_NONE;
     }
 }
@@ -377,6 +384,8 @@ td_cmd_t td_input_feed(td_input_t *in, td_key_t key)
         case 's': return TD_CMD_SELECT_ALL;
         case 'u': return TD_CMD_UNSELECT_ALL;
         case 't': return TD_CMD_TOGGLE_ALL;
+        case '_': return TD_CMD_AUTOSIZE_ALL_COLS;
+        case 'v': return TD_CMD_UNHIDE_ALL_COLS;
         case 'z':
             in->prefix = 3;
             return TD_CMD_NONE;
@@ -384,7 +393,18 @@ td_cmd_t td_input_feed(td_input_t *in, td_key_t key)
         }
     }
 
-    /* z and gz are reserved prefixes with no Phase 0 bindings. */
+    if (in->prefix == 2) {
+        in->prefix = 0;
+        if (key.kind != TD_KEY_CHAR)
+            return TD_CMD_NONE;
+        switch (key.ch) {
+        case '_': return TD_CMD_SET_COL_WIDTH;
+        case '~': return TD_CMD_TYPE_ANY;
+        default:  return TD_CMD_NONE;
+        }
+    }
+
+    /* gz is a reserved prefix with no bindings yet. */
     in->prefix = 0;
     return TD_CMD_NONE;
 }
@@ -424,7 +444,8 @@ void td_prompt_free(td_prompt_t *p)
     memset(p, 0, sizeof(*p));
 }
 
-void td_prompt_start(td_prompt_t *p, const char *label, const char *initial)
+void td_prompt_start_kind(td_prompt_t *p, td_prompt_kind_t kind,
+                          const char *label, const char *initial)
 {
     size_t n;
 
@@ -439,6 +460,7 @@ void td_prompt_start(td_prompt_t *p, const char *label, const char *initial)
         if (p->label)
             memcpy(p->label, label, len + 1);
     }
+    p->kind = kind;
     p->len = 0;
     p->cursor = 0;
     if (p->buf)
@@ -454,10 +476,22 @@ void td_prompt_start(td_prompt_t *p, const char *label, const char *initial)
     p->active = true;
 }
 
+void td_prompt_start(td_prompt_t *p, const char *label, const char *initial)
+{
+    td_prompt_start_kind(p, TD_PROMPT_NONE, label, initial);
+}
+
 void td_prompt_stop(td_prompt_t *p)
 {
-    if (p)
+    if (p) {
         p->active = false;
+        p->kind = TD_PROMPT_NONE;
+    }
+}
+
+td_prompt_kind_t td_prompt_kind(const td_prompt_t *p)
+{
+    return p ? p->kind : TD_PROMPT_NONE;
 }
 
 const char *td_prompt_label(const td_prompt_t *p)
