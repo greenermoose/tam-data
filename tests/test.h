@@ -51,5 +51,6 @@ void test_term(void);
 void test_input(void);
 void test_clipboard(void);
 void test_cmdlog(void);
+void test_agg(void);
 
 #endif /* TD_TEST_H */

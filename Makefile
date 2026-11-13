@@ -41,7 +41,7 @@ LIBTAM_ERROR  := $(if $(LIBTAM_FOUND),,$(PKG_CONFIG) cannot find libtam 0.4.0 or
 endif
 
 LDFLAGS  ?=
-LDLIBS   ?=
+LDLIBS   ?= -lm
 
 TD_BUILD_ID := $(shell git -C $(CURDIR) describe --always --dirty 2>/dev/null)
 CPPFLAGS += -DTD_BUILD_ID=\"$(TD_BUILD_ID)\"
@@ -51,14 +51,16 @@ BIN      := $(BUILD)/tam-data
 TEST_BIN := $(BUILD)/test_tam-data
 
 SRC := src/arena.c src/val.c src/sheet.c src/csv.c src/term.c src/input.c \
-       src/clipboard.c src/cmdlog.c src/tam-data.c
+       src/clipboard.c src/cmdlog.c src/agg.c src/tam-data.c
 DEPS := src/version.h src/utf8.h src/arena.h src/val.h src/sheet.h src/csv.h \
-        src/term.h src/input.h src/clipboard.h src/cmdlog.h src/tam-data.h
+        src/term.h src/input.h src/clipboard.h src/cmdlog.h src/agg.h \
+        src/tam-data.h
 
 OBJS      := $(SRC:src/%.c=$(BUILD)/obj/%.o)
 TEST_SRCS := tests/test_main.c tests/test_arena.c tests/test_val.c \
              tests/test_sheet.c tests/test_csv.c tests/test_term.c \
-             tests/test_input.c tests/test_clipboard.c tests/test_cmdlog.c
+             tests/test_input.c tests/test_clipboard.c tests/test_cmdlog.c \
+             tests/test_agg.c
 TEST_OBJS := $(TEST_SRCS:tests/%.c=$(BUILD)/test/%.o) \
              $(SRC:src/%.c=$(BUILD)/test/src/%.o)
 

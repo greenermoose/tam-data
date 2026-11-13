@@ -10,6 +10,7 @@
 
 #define TD_AUTO_WIDTH_CAP 40
 #define TD_AUTO_WIDTH_MIN 3
+#define TD_MAX_COL_AGGS 12
 
 typedef struct {
     char *name;
@@ -17,6 +18,10 @@ typedef struct {
     int width;        /* > 0 fixed, 0 hidden, < 0 auto with cap -width */
     int cached_width; /* > 0 cached auto-width, 0 dirty */
     bool is_key;      /* pinned key column */
+    uint8_t aggs[TD_MAX_COL_AGGS]; /* attached td_agg_kind_t list */
+    uint8_t naggs;
+    bool agg_dirty;
+    td_val_t agg_vals[TD_MAX_COL_AGGS];
     td_val_t *cells;  /* row_cap contiguous cells */
 } td_col_t;
 
@@ -62,6 +67,12 @@ typedef struct {
     td_undo_stack_t undo;
     td_undo_stack_t redo;
     bool record_undo;
+
+    uint64_t id;
+    uint64_t source_id;
+    uint8_t kind;        /* td_sheet_kind_t */
+    void *meta;
+    void (*meta_free)(void *);
 } td_sheet_t;
 
 typedef struct {
@@ -77,6 +88,7 @@ size_t td_sheet_add_col(td_sheet_t *s, const char *name, td_type_t type,
                         int width);
 size_t td_sheet_add_row(td_sheet_t *s);
 td_val_t td_sheet_get_cell(const td_sheet_t *s, size_t row, size_t col);
+td_val_t td_sheet_eval_cell(const td_sheet_t *s, size_t phys_row, size_t col);
 bool td_sheet_set_cell(td_sheet_t *s, size_t row, size_t col, td_val_t v);
 
 void td_sheet_select_row(td_sheet_t *s, size_t row);
@@ -116,7 +128,13 @@ bool td_sheet_search_next(td_sheet_t *s, int dir_mult, char *err,
                           size_t err_cap);
 bool td_sheet_delete_row(td_sheet_t *s, size_t vis_row);
 size_t td_sheet_delete_selected(td_sheet_t *s);
+td_sheet_t *td_sheet_extract_phys_rows(const td_sheet_t *s,
+                                         const size_t *phys_rows, size_t nphys,
+                                         const char *suffix);
 td_sheet_t *td_sheet_dup_selected(const td_sheet_t *s, const char *suffix);
+bool td_sheet_set_col_aggs(td_sheet_t *s, size_t col, const uint8_t *aggs,
+                           uint8_t naggs, const char *desc);
+int td_sheet_footer_rows(const td_sheet_t *s, int term_rows);
 bool td_sheet_sort_cols(td_sheet_t *s, const size_t *cols, size_t ncols,
                         bool desc);
 bool td_sheet_sort_col(td_sheet_t *s, size_t col, bool desc);
@@ -147,6 +165,7 @@ bool td_sheet_dup_col(td_sheet_t *s, size_t col);
 bool td_stack_push(td_stack_t *st, td_sheet_t *s);
 td_sheet_t *td_stack_pop(td_stack_t *st);
 td_sheet_t *td_stack_active(const td_stack_t *st);
+td_sheet_t *td_stack_find_by_id(const td_stack_t *st, uint64_t id);
 void td_stack_free(td_stack_t *st);
 
 #endif /* TD_SHEET_H */

@@ -16,6 +16,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include "agg.h"
 #include "csv.h"
 #include "input.h"
 #include "utf8.h"
@@ -153,11 +154,69 @@ static void td_render_status(td_term_t *t, td_stack_t *stack,
     }
 }
 
+static void td_render_footer(td_term_t *t, const td_sheet_t *s, int start_row,
+                             int footer_rows)
+{
+    for (int f = 0; f < footer_rows; f++) {
+        int y = start_row + f;
+        int bx = 0;
+
+        for (size_t pass = 0; pass < 2; pass++) {
+            size_t start = pass == 0 ? 0 : s->left_col;
+
+            for (size_t c = start; c < s->ncols && bx < t->cols; c++) {
+                const td_col_t *col = &s->cols[c];
+                int width;
+                char text[512];
+                int pad = 0;
+
+                if (pass == 0 && !col->is_key)
+                    continue;
+                if (pass == 1 && col->is_key)
+                    continue;
+                width = td_sheet_col_width(s, c);
+                if (width <= 0)
+                    continue;
+
+                if (f < (int)col->naggs) {
+                    td_agg_kind_t ak = (td_agg_kind_t)col->aggs[f];
+                    td_type_t rt = td_agg_result_type(ak, col->type);
+                    td_val_t v = col->agg_vals[f];
+                    char vbuf[256];
+
+                    if (v.type == TD_TYPE_NULL)
+                        snprintf(vbuf, sizeof(vbuf), "-");
+                    else
+                        (void)td_val_format(v, rt, vbuf, sizeof(vbuf));
+                    snprintf(text, sizeof(text), "%s=%s",
+                             td_agg_name(ak), vbuf);
+                    if (td_type_is_numeric(rt) || ak == TD_AGG_COUNT ||
+                        ak == TD_AGG_DISTINCT || ak == TD_AGG_NULLS) {
+                        int tw = (int)td_utf8_width(text);
+
+                        if (tw < width)
+                            pad = width - tw;
+                    }
+                    td_term_put_str(t, y, bx + pad, width - pad, text,
+                                    TD_COLOR_DEFAULT, TD_COLOR_DEFAULT,
+                                    TD_ATTR_BOLD);
+                }
+                bx += width;
+                if (bx < t->cols) {
+                    td_draw_separator(t, y, bx, col->is_key);
+                    bx++;
+                }
+            }
+        }
+    }
+}
+
 void td_view_render(td_term_t *t, td_stack_t *stack,
                     const td_view_state_t *state)
 {
     td_sheet_t *s = td_stack_active(stack);
     int header_row = 0;
+    int footer_rows;
     int body_rows;
     int x;
 
@@ -169,7 +228,11 @@ void td_view_render(td_term_t *t, td_stack_t *stack,
     if (!s || t->rows < 2)
         return;
 
-    body_rows = t->rows - 2;
+    td_sheet_refresh_col_aggs(s);
+    footer_rows = td_sheet_footer_rows(s, t->rows);
+    body_rows = t->rows - 2 - footer_rows;
+    if (body_rows < 0)
+        body_rows = 0;
     x = 0;
 
     /* Header: pinned key columns first, then regular columns from left_col. */
@@ -284,6 +347,9 @@ void td_view_render(td_term_t *t, td_stack_t *stack,
             }
         }
     }
+
+    if (footer_rows > 0)
+        td_render_footer(t, s, t->rows - 1 - footer_rows, footer_rows);
 }
 
 td_sheet_t *td_demo_sheet(void)
@@ -399,12 +465,32 @@ static bool td_exec_fail(td_exec_ctx_t *ctx, char *err, size_t err_cap,
     return false;
 }
 
+static bool td_push_derived_sheet(td_exec_ctx_t *ctx, td_sheet_t *derived,
+                                  const char *fallback_err, char *err,
+                                  size_t err_cap, const char *noun)
+{
+    if (!derived)
+        return td_exec_fail(ctx, err, err_cap, "%s",
+                            fallback_err && fallback_err[0]
+                                ? fallback_err
+                                : "operation failed");
+    if (!td_stack_push(ctx->stack, derived)) {
+        td_sheet_free(derived);
+        return td_exec_fail(ctx, err, err_cap, "out of memory");
+    }
+    td_set_message(ctx->msg, ctx->msg_cap, "%s (%zu %s)",
+                   noun ? noun : derived->name, derived->nrows,
+                   derived->nrows == 1 ? "row" : "rows");
+    return true;
+}
+
 bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
                     char *err, size_t err_cap)
 {
     td_sheet_t *s;
     size_t orig_row;
     size_t orig_col;
+    int footer_rows;
     int body_rows;
     size_t next;
     bool ok = true;
@@ -420,7 +506,12 @@ bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
 
     orig_row = s->cursor_row;
     orig_col = s->cursor_col;
-    body_rows = (ctx->term && ctx->term->rows > 2) ? (ctx->term->rows - 2) : 22;
+    footer_rows = td_sheet_footer_rows(s, ctx->term ? ctx->term->rows : 24);
+    body_rows = (ctx->term && ctx->term->rows > 2 + footer_rows)
+                    ? (ctx->term->rows - 2 - footer_rows)
+                    : 22;
+    if (body_rows < 1)
+        body_rows = 1;
 
     switch (cmd) {
     case TD_CMD_NONE:
@@ -934,6 +1025,137 @@ bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
                        cl->nrows, cl->nrows == 1 ? "entry" : "entries");
         return true;
     }
+    case TD_CMD_FREQ_COL: {
+        char ferr[256];
+        td_sheet_t *freq;
+
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        freq = td_agg_freq_sheet(s, &s->cursor_col, 1, ferr, sizeof(ferr));
+        ok = td_push_derived_sheet(ctx, freq, ferr, err, err_cap,
+                                   "frequency table");
+        break;
+    }
+    case TD_CMD_FREQ_KEYS: {
+        char ferr[256];
+        size_t *keys = NULL;
+        size_t nkeys = 0;
+        td_sheet_t *freq;
+
+        if (s->ncols == 0)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        keys = malloc(s->ncols * sizeof(*keys));
+        if (!keys)
+            return td_exec_fail(ctx, err, err_cap, "out of memory");
+        for (size_t c = 0; c < s->ncols; c++) {
+            if (s->cols[c].is_key && s->cols[c].width != 0)
+                keys[nkeys++] = c;
+        }
+        if (nkeys == 0 && s->cursor_col < s->ncols)
+            keys[nkeys++] = s->cursor_col;
+        freq = td_agg_freq_sheet(s, keys, nkeys, ferr, sizeof(ferr));
+        free(keys);
+        ok = td_push_derived_sheet(ctx, freq, ferr, err, err_cap,
+                                   "frequency table");
+        break;
+    }
+    case TD_CMD_AGGREGATOR: {
+        char msg_buf[256] = "";
+        char aerr[256] = "";
+
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        if (!td_sheet_toggle_agg(s, s->cursor_col, input_arg, msg_buf,
+                                 sizeof(msg_buf), aerr, sizeof(aerr)))
+            return td_exec_fail(ctx, err, err_cap, "%s", aerr);
+        td_set_message(ctx->msg, ctx->msg_cap, "%s", msg_buf);
+        break;
+    }
+    case TD_CMD_AGGREGATOR_ONE: {
+        td_agg_kind_t ak;
+        td_val_t v;
+        td_type_t rt;
+        char vbuf[256];
+        const char *cname;
+
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        if (!td_agg_parse(input_arg, &ak))
+            return td_exec_fail(ctx, err, err_cap, "unknown aggregator: %s",
+                                input_arg ? input_arg : "");
+        v = td_agg_compute_rows(s, s->cursor_col, NULL, 0, ak);
+        rt = td_agg_result_type(ak, s->cols[s->cursor_col].type);
+        cname = s->cols[s->cursor_col].name ? s->cols[s->cursor_col].name : "";
+        if (v.type == TD_TYPE_NULL && td_agg_is_numeric_only(ak) &&
+            !td_type_is_numeric(s->cols[s->cursor_col].type)) {
+            td_set_message(ctx->msg, ctx->msg_cap,
+                           "%s %s = (untyped: set # / %% / $)",
+                           cname, td_agg_name(ak));
+        } else if (v.type == TD_TYPE_NULL) {
+            td_set_message(ctx->msg, ctx->msg_cap, "%s %s = (null)",
+                           cname, td_agg_name(ak));
+        } else {
+            (void)td_val_format(v, rt, vbuf, sizeof(vbuf));
+            td_set_message(ctx->msg, ctx->msg_cap, "%s %s = %s",
+                           cname, td_agg_name(ak), vbuf);
+        }
+        break;
+    }
+    case TD_CMD_DESCRIBE: {
+        char derr[256];
+        td_sheet_t *desc = td_agg_describe_sheet(s, derr, sizeof(derr));
+
+        ok = td_push_derived_sheet(ctx, desc, derr, err, err_cap,
+                                   "describe sheet");
+        break;
+    }
+    case TD_CMD_PIVOT: {
+        char perr[256];
+        td_sheet_t *piv;
+
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        piv = td_agg_pivot_sheet(s, s->cursor_col, perr, sizeof(perr));
+        ok = td_push_derived_sheet(ctx, piv, perr, err, err_cap,
+                                   "pivot sheet");
+        break;
+    }
+    case TD_CMD_MELT: {
+        char merr[256];
+        td_sheet_t *melt = td_agg_melt_sheet(s, merr, sizeof(merr));
+
+        ok = td_push_derived_sheet(ctx, melt, merr, err, err_cap,
+                                   "melt sheet");
+        break;
+    }
+    case TD_CMD_JOIN: {
+        td_join_kind_t jk;
+        char jerr[256];
+        td_sheet_t *joined;
+
+        if (ctx->stack->len < 2)
+            return td_exec_fail(ctx, err, err_cap,
+                                "need at least 2 sheets on stack to join");
+        if (!td_join_parse(input_arg, &jk))
+            return td_exec_fail(
+                ctx, err, err_cap,
+                "invalid join type: %s (use inner/outer/full/diff/append/extend)",
+                input_arg ? input_arg : "");
+        joined = td_agg_join_sheets(ctx->stack->sheets[ctx->stack->len - 2],
+                                    ctx->stack->sheets[ctx->stack->len - 1],
+                                    jk, jerr, sizeof(jerr));
+        ok = td_push_derived_sheet(ctx, joined, jerr, err, err_cap,
+                                   "joined sheet");
+        break;
+    }
+    case TD_CMD_DIVE_ROW: {
+        char derr[256];
+        td_sheet_t *child = td_agg_dive_row(s, ctx->stack, derr, sizeof(derr));
+
+        ok = td_push_derived_sheet(ctx, child, derr, err, err_cap,
+                                   "filtered rows");
+        break;
+    }
     case TD_CMD_REDRAW:
         if (ctx->term)
             ctx->term->force_full = true;
@@ -987,6 +1209,11 @@ static void td_usage(FILE *out)
         "  p / P / zp            paste after / before / into cell(s)\n"
         "  U / R                 undo / redo last action on active sheet\n"
         "  D                     open Command Log sheet (cmdlog)\n"
+        "  F / gF / Enter        frequency table (col / keys) / dive into bin\n"
+        "  + / z+                attach persistent / calculate one-off aggregator\n"
+        "  I                     open Describe statistical summary sheet\n"
+        "  W / M                 pivot by key & cursor col / melt wide table\n"
+        "  &                     join top two sheets (inner/outer/full/diff/append/extend)\n"
         "  [ ] / g[ g]           sort asc / desc (current col / key cols)\n"
         "  !                     pin or unpin the current column as a key\n"
         "  - / gv                hide current column / unhide all columns\n"
@@ -1142,6 +1369,32 @@ static void td_handle_command(td_cmd_t cmd, td_exec_ctx_t *ctx,
     case TD_CMD_ADD_ROWS:
         td_prompt_start_kind(prompt, TD_PROMPT_ADD_ROWS, "add rows:", "1");
         return;
+    case TD_CMD_AGGREGATOR:
+        if (s->ncols == 0 || s->cursor_col >= s->ncols) {
+            td_set_message(ctx->msg, ctx->msg_cap, "no column");
+            return;
+        }
+        td_prompt_start_kind(prompt, TD_PROMPT_AGGREGATOR,
+                             "add aggregator:", "");
+        return;
+    case TD_CMD_AGGREGATOR_ONE:
+        if (s->ncols == 0 || s->cursor_col >= s->ncols) {
+            td_set_message(ctx->msg, ctx->msg_cap, "no column");
+            return;
+        }
+        td_prompt_start_kind(prompt, TD_PROMPT_AGGREGATOR_ONE,
+                             "calc aggregator:", "");
+        return;
+    case TD_CMD_JOIN:
+        if (ctx->stack->len < 2) {
+            td_set_message(ctx->msg, ctx->msg_cap,
+                           "need at least 2 sheets on stack to join");
+            return;
+        }
+        td_prompt_start_kind(prompt, TD_PROMPT_JOIN,
+                             "join (inner/outer/full/diff/append/extend):",
+                             "inner");
+        return;
     default:
         (void)td_exec_action(cmd, NULL, ctx, NULL, 0);
         return;
@@ -1165,6 +1418,9 @@ static td_cmd_t td_prompt_to_cmd(td_prompt_kind_t kind)
     case TD_PROMPT_EDIT_CELL:          return TD_CMD_EDIT_CELL;
     case TD_PROMPT_EDIT_SELECTED:      return TD_CMD_EDIT_SELECTED;
     case TD_PROMPT_ADD_ROWS:           return TD_CMD_ADD_ROWS;
+    case TD_PROMPT_AGGREGATOR:         return TD_CMD_AGGREGATOR;
+    case TD_PROMPT_AGGREGATOR_ONE:     return TD_CMD_AGGREGATOR_ONE;
+    case TD_PROMPT_JOIN:               return TD_CMD_JOIN;
     default:                           return TD_CMD_NONE;
     }
 }
@@ -1205,6 +1461,11 @@ static void td_handle_prompt_result(td_prompt_result_t pr, td_prompt_t *prompt,
             what = "edit cancelled";
         else if (kind == TD_PROMPT_ADD_ROWS)
             what = "add rows cancelled";
+        else if (kind == TD_PROMPT_AGGREGATOR ||
+                 kind == TD_PROMPT_AGGREGATOR_ONE)
+            what = "aggregator cancelled";
+        else if (kind == TD_PROMPT_JOIN)
+            what = "join cancelled";
         td_prompt_stop(prompt);
         td_set_message(ctx->msg, ctx->msg_cap, "%s", what);
     }
@@ -1457,7 +1718,8 @@ int main(int argc, char **argv)
 
     while (!quit) {
         td_sheet_t *active = td_stack_active(&stack);
-        int body_rows = term.rows - 2;
+        int footer_rows = td_sheet_footer_rows(active, term.rows);
+        int body_rows = term.rows - 2 - footer_rows;
 
         if (body_rows < 1)
             body_rows = 1;

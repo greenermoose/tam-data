@@ -335,5 +335,27 @@ void test_input(void)
                  TD_PROMPT_IGNORE);
     td_prompt_stop(&p);
 
+    /* Phase 4 chords and prompt kinds. */
+    TD_CHECK_INT(td_input_feed(&in, (td_key_t){ TD_KEY_ENTER, 0 }),
+                 TD_CMD_DIVE_ROW);
+    TD_CHECK_INT(td_input_feed(&in, key_char('F')), TD_CMD_FREQ_COL);
+    TD_CHECK_INT(td_input_feed(&in, key_char('I')), TD_CMD_DESCRIBE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('W')), TD_CMD_PIVOT);
+    TD_CHECK_INT(td_input_feed(&in, key_char('M')), TD_CMD_MELT);
+    TD_CHECK_INT(td_input_feed(&in, key_char('+')), TD_CMD_AGGREGATOR);
+    TD_CHECK_INT(td_input_feed(&in, key_char('&')), TD_CMD_JOIN);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('F')), TD_CMD_FREQ_KEYS);
+    TD_CHECK_INT(td_input_feed(&in, key_char('z')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('+')), TD_CMD_AGGREGATOR_ONE);
+
+    td_prompt_start_kind(&p, TD_PROMPT_AGGREGATOR, "add aggregator:", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_AGGREGATOR);
+    td_prompt_start_kind(&p, TD_PROMPT_AGGREGATOR_ONE, "calc aggregator:", "");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_AGGREGATOR_ONE);
+    td_prompt_start_kind(&p, TD_PROMPT_JOIN, "join:", "inner");
+    TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_JOIN);
+    td_prompt_stop(&p);
+
     td_prompt_free(&p);
 }

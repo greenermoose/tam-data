@@ -311,6 +311,8 @@ static td_cmd_t td_input_single(td_key_t key)
         return TD_CMD_PAGE_UP;
     if (key.kind == TD_KEY_PGDN)
         return TD_CMD_PAGE_DOWN;
+    if (key.kind == TD_KEY_ENTER)
+        return TD_CMD_DIVE_ROW;
     if (key.kind != TD_KEY_CHAR)
         return TD_CMD_NONE;
 
@@ -346,6 +348,12 @@ static td_cmd_t td_input_single(td_key_t key)
     case 'U': return TD_CMD_UNDO;
     case 'R': return TD_CMD_REDO;
     case 'D': return TD_CMD_SHOW_CMDLOG;
+    case 'F': return TD_CMD_FREQ_COL;
+    case 'I': return TD_CMD_DESCRIBE;
+    case 'W': return TD_CMD_PIVOT;
+    case 'M': return TD_CMD_MELT;
+    case '+': return TD_CMD_AGGREGATOR;
+    case '&': return TD_CMD_JOIN;
     case '[': return TD_CMD_SORT_ASC;
     case ']': return TD_CMD_SORT_DESC;
     case '-': return TD_CMD_HIDE_COL;
@@ -415,6 +423,7 @@ td_cmd_t td_input_feed(td_input_t *in, td_key_t key)
         case ']': return TD_CMD_SORT_KEYS_DESC;
         case '_': return TD_CMD_AUTOSIZE_ALL_COLS;
         case 'v': return TD_CMD_UNHIDE_ALL_COLS;
+        case 'F': return TD_CMD_FREQ_KEYS;
         case 'z':
             in->prefix = 3;
             return TD_CMD_NONE;
@@ -434,6 +443,7 @@ td_cmd_t td_input_feed(td_input_t *in, td_key_t key)
         case 'y': return TD_CMD_YANK_CELL;
         case 'p': return TD_CMD_PASTE_CELL;
         case '"': return TD_CMD_DUP_COL;
+        case '+': return TD_CMD_AGGREGATOR_ONE;
         default:  return TD_CMD_NONE;
         }
     }

@@ -20,7 +20,8 @@ typedef enum {
     TD_UNDO_COL_VIS_ALL,
     TD_UNDO_COL_SWAP,
     TD_UNDO_COL_TYPE,
-    TD_UNDO_COL_ADD
+    TD_UNDO_COL_ADD,
+    TD_UNDO_COL_AGGS
 } td_undo_kind_t;
 
 typedef struct {
@@ -72,6 +73,11 @@ struct td_undo_entry {
             td_col_t saved_col;
             bool present;
         } col_add;
+        struct {
+            size_t col;
+            uint8_t alt_aggs[TD_MAX_COL_AGGS];
+            uint8_t alt_naggs;
+        } col_aggs;
     } u;
 };
 
@@ -89,6 +95,7 @@ static void td_undo_entry_free(td_undo_entry_t *e)
         break;
     case TD_UNDO_COL_META:
     case TD_UNDO_COL_SWAP:
+    case TD_UNDO_COL_AGGS:
         break;
     case TD_UNDO_COL_VIS_ALL:
         free(e->u.col_vis.alt_widths);
@@ -159,6 +166,7 @@ static bool td_undo_record(td_sheet_t *s, td_undo_entry_t *e)
 
 td_sheet_t *td_sheet_new(const char *name, const char *source_path)
 {
+    static uint64_t next_id = 1;
     td_sheet_t *s = calloc(1, sizeof(*s));
 
     if (!s)
@@ -171,6 +179,7 @@ td_sheet_t *td_sheet_new(const char *name, const char *source_path)
         return NULL;
     }
     s->record_undo = true;
+    s->id = next_id++;
     return s;
 }
 
@@ -178,6 +187,8 @@ void td_sheet_free(td_sheet_t *s)
 {
     if (!s)
         return;
+    if (s->meta_free && s->meta)
+        s->meta_free(s->meta);
     td_undo_stack_free(&s->undo);
     td_undo_stack_free(&s->redo);
     for (size_t c = 0; c < s->ncols; c++)
@@ -302,6 +313,7 @@ size_t td_sheet_add_row(td_sheet_t *s)
     for (size_t c = 0; c < s->ncols; c++) {
         s->cols[c].cells[phys] = TD_VAL_NULL;
         s->cols[c].cached_width = 0;
+        s->cols[c].agg_dirty = true;
     }
     s->row_order[s->nrows] = phys;
     s->phys_nrows++;
@@ -316,12 +328,26 @@ td_val_t td_sheet_get_cell(const td_sheet_t *s, size_t row, size_t col)
     return s->cols[col].cells[row];
 }
 
+td_val_t td_sheet_eval_cell(const td_sheet_t *s, size_t phys_row, size_t col)
+{
+    td_val_t v = td_sheet_get_cell(s, phys_row, col);
+    td_type_t type;
+
+    if (!s || col >= s->ncols)
+        return TD_VAL_NULL;
+    type = s->cols[col].type;
+    if (v.type == TD_TYPE_ANY && type != TD_TYPE_ANY)
+        v = td_val_parse(v.as.s, type);
+    return v;
+}
+
 bool td_sheet_set_cell(td_sheet_t *s, size_t row, size_t col, td_val_t v)
 {
     if (!s || row >= s->phys_nrows || col >= s->ncols)
         return false;
     s->cols[col].cells[row] = v;
     s->cols[col].cached_width = 0;
+    s->cols[col].agg_dirty = true;
     return true;
 }
 
@@ -603,6 +629,7 @@ static bool td_sheet_set_col_type_raw(td_sheet_t *s, size_t col, td_type_t type)
                                                 type);
     s->cols[col].type = type;
     s->cols[col].cached_width = 0;
+    s->cols[col].agg_dirty = true;
     return true;
 }
 
@@ -1087,6 +1114,17 @@ td_sheet_t *td_stack_active(const td_stack_t *st)
     return st->sheets[st->len - 1];
 }
 
+td_sheet_t *td_stack_find_by_id(const td_stack_t *st, uint64_t id)
+{
+    if (!st || id == 0)
+        return NULL;
+    for (size_t i = st->len; i-- > 0;) {
+        if (st->sheets[i] && st->sheets[i]->id == id)
+            return st->sheets[i];
+    }
+    return NULL;
+}
+
 void td_stack_free(td_stack_t *st)
 {
     if (!st)
@@ -1110,6 +1148,7 @@ static void td_invalidate_auto_widths(td_sheet_t *s)
     for (size_t c = 0; c < s->ncols; c++) {
         if (s->cols[c].width < 0)
             s->cols[c].cached_width = 0;
+        s->cols[c].agg_dirty = true;
     }
 }
 
@@ -1408,7 +1447,9 @@ static td_val_t td_clone_val_to_arena(td_arena_t *arena, td_val_t v, bool *ok)
     return v;
 }
 
-td_sheet_t *td_sheet_dup_selected(const td_sheet_t *s, const char *suffix)
+td_sheet_t *td_sheet_extract_phys_rows(const td_sheet_t *s,
+                                         const size_t *phys_rows, size_t nphys,
+                                         const char *suffix)
 {
     const char *base;
     const char *sfx;
@@ -1416,11 +1457,11 @@ td_sheet_t *td_sheet_dup_selected(const td_sheet_t *s, const char *suffix)
     char *name_buf;
     td_sheet_t *dup;
 
-    if (!s || s->nselected == 0)
+    if (!s)
         return NULL;
 
     base = s->name ? s->name : "";
-    sfx = suffix ? suffix : "[selected]";
+    sfx = suffix ? suffix : "[filtered]";
     name_len = strlen(base) + strlen(sfx) + 1;
     name_buf = malloc(name_len);
     if (!name_buf)
@@ -1442,11 +1483,11 @@ td_sheet_t *td_sheet_dup_selected(const td_sheet_t *s, const char *suffix)
         dup->cols[idx].is_key = s->cols[c].is_key;
     }
 
-    for (size_t vr = 0; vr < s->nrows; vr++) {
-        size_t phys = s->row_order ? s->row_order[vr] : vr;
+    for (size_t i = 0; i < nphys; i++) {
+        size_t phys = phys_rows[i];
         size_t dst_row;
 
-        if (!td_sheet_is_selected(s, phys))
+        if (phys >= s->phys_nrows)
             continue;
         dst_row = td_sheet_add_row(dup);
         if (dst_row == SIZE_MAX) {
@@ -1468,6 +1509,79 @@ td_sheet_t *td_sheet_dup_selected(const td_sheet_t *s, const char *suffix)
     if (dup->ncols > 0 && s->cursor_col < dup->ncols)
         dup->cursor_col = s->cursor_col;
     return dup;
+}
+
+td_sheet_t *td_sheet_dup_selected(const td_sheet_t *s, const char *suffix)
+{
+    size_t *phys_list;
+    size_t n = 0;
+    td_sheet_t *dup;
+
+    if (!s || s->nselected == 0)
+        return NULL;
+
+    phys_list = malloc(s->nrows * sizeof(*phys_list));
+    if (!phys_list)
+        return NULL;
+    for (size_t vr = 0; vr < s->nrows; vr++) {
+        size_t phys = s->row_order ? s->row_order[vr] : vr;
+
+        if (td_sheet_is_selected(s, phys))
+            phys_list[n++] = phys;
+    }
+
+    dup = td_sheet_extract_phys_rows(s, phys_list, n,
+                                     suffix ? suffix : "[selected]");
+    free(phys_list);
+    return dup;
+}
+
+bool td_sheet_set_col_aggs(td_sheet_t *s, size_t col, const uint8_t *aggs,
+                           uint8_t naggs, const char *desc)
+{
+    td_undo_entry_t e;
+
+    if (!s || col >= s->ncols || naggs > TD_MAX_COL_AGGS)
+        return false;
+    if (naggs > 0 && !aggs)
+        return false;
+
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_AGGS,
+                           desc ? desc : "set aggregators");
+        e.u.col_aggs.col = col;
+        e.u.col_aggs.alt_naggs = s->cols[col].naggs;
+        memcpy(e.u.col_aggs.alt_aggs, s->cols[col].aggs,
+               sizeof(e.u.col_aggs.alt_aggs));
+        if (!td_undo_record(s, &e))
+            return false;
+    }
+
+    memset(s->cols[col].aggs, 0, sizeof(s->cols[col].aggs));
+    if (naggs > 0)
+        memcpy(s->cols[col].aggs, aggs, naggs * sizeof(aggs[0]));
+    s->cols[col].naggs = naggs;
+    s->cols[col].agg_dirty = true;
+    return true;
+}
+
+int td_sheet_footer_rows(const td_sheet_t *s, int term_rows)
+{
+    int max_aggs = 0;
+    int avail;
+
+    if (!s || term_rows < 4)
+        return 0;
+    for (size_t c = 0; c < s->ncols; c++) {
+        if (s->cols[c].width != 0 && (int)s->cols[c].naggs > max_aggs)
+            max_aggs = (int)s->cols[c].naggs;
+    }
+    if (max_aggs == 0)
+        return 0;
+    avail = term_rows - 3; /* header + at least 1 body row + status bar */
+    if (max_aggs > avail)
+        max_aggs = avail;
+    return max_aggs > 0 ? max_aggs : 0;
 }
 
 typedef struct {
@@ -1752,6 +1866,7 @@ static bool td_undo_apply(td_sheet_t *s, td_undo_stack_t *from,
                 s->cols[d->col].cells[d->phys_row] = d->alt_val;
                 d->alt_val = tmp;
                 s->cols[d->col].cached_width = 0;
+                s->cols[d->col].agg_dirty = true;
             }
         }
         break;
@@ -1818,6 +1933,7 @@ static bool td_undo_apply(td_sheet_t *s, td_undo_stack_t *from,
             }
             s->cols[c].type = e.u.col_type.alt_type;
             s->cols[c].cached_width = 0;
+            s->cols[c].agg_dirty = true;
             e.u.col_type.alt_type = tmp_t;
         }
         break;
@@ -1825,6 +1941,24 @@ static bool td_undo_apply(td_sheet_t *s, td_undo_stack_t *from,
     case TD_UNDO_COL_ADD:
         ok = td_undo_swap_col_add(s, &e);
         break;
+    case TD_UNDO_COL_AGGS: {
+        size_t c = e.u.col_aggs.col;
+
+        if (c < s->ncols) {
+            uint8_t tmp_aggs[TD_MAX_COL_AGGS];
+            uint8_t tmp_n = s->cols[c].naggs;
+
+            memcpy(tmp_aggs, s->cols[c].aggs, sizeof(tmp_aggs));
+            memcpy(s->cols[c].aggs, e.u.col_aggs.alt_aggs,
+                   sizeof(s->cols[c].aggs));
+            s->cols[c].naggs = e.u.col_aggs.alt_naggs;
+            s->cols[c].agg_dirty = true;
+            memcpy(e.u.col_aggs.alt_aggs, tmp_aggs,
+                   sizeof(e.u.col_aggs.alt_aggs));
+            e.u.col_aggs.alt_naggs = tmp_n;
+        }
+        break;
+    }
     }
 
     if (!ok) {
@@ -1964,6 +2098,7 @@ bool td_sheet_apply_cell_batch(td_sheet_t *s, const size_t *vis_rows,
         }
         s->cols[col].cells[phys] = nv;
         s->cols[col].cached_width = 0;
+        s->cols[col].agg_dirty = true;
         applied++;
     }
 
@@ -2090,6 +2225,7 @@ bool td_sheet_insert_rows_populated(td_sheet_t *s, size_t vis_pos,
             }
             s->cols[c].cells[phys] = v;
             s->cols[c].cached_width = 0;
+            s->cols[c].agg_dirty = true;
         }
         s->row_order[vis_pos + r] = phys;
     }

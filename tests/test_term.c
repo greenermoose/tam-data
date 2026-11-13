@@ -201,6 +201,23 @@ void test_term(void)
         td_sheet_free(td_stack_pop(&st));
     }
 
+    /* Persistent aggregator footer row rendering. */
+    uint8_t qty_aggs[2] = { 3 /* TD_AGG_SUM */, 4 /* TD_AGG_MEAN */ };
+    td_sheet_set_col_width(s, 1, 10);
+    td_sheet_set_cell(s, 1, 1, td_val_parse(td_slice_from_cstr("7"), TD_TYPE_INT));
+    TD_CHECK(td_sheet_set_col_aggs(s, 1, qty_aggs, 2, "test aggs"));
+    TD_CHECK_INT(td_sheet_footer_rows(s, 10), 2);
+    td_view_render(&t, &st, &view);
+    /* Row 7 = first footer (sum=10), Row 8 = second footer (mean=5), Row 9 = status. */
+    TD_CHECK(td_term_back_cell(&t, 7, 11).attr & TD_ATTR_BOLD);
+    TD_CHECK_INT(td_term_back_cell(&t, 7, 11).ch, 's');
+    TD_CHECK_INT(td_term_back_cell(&t, 7, 14).ch, '=');
+    TD_CHECK_INT(td_term_back_cell(&t, 7, 15).ch, '1');
+    TD_CHECK_INT(td_term_back_cell(&t, 7, 16).ch, '0');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 11).ch, 'm');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 15).ch, '=');
+    TD_CHECK_INT(td_term_back_cell(&t, 8, 16).ch, '5');
+
     td_term_close(&t);
     td_stack_free(&st);
 }

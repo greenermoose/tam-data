@@ -2,7 +2,7 @@
 
 This document outlines the architectural plan and phased roadmap for `tam-data`: a pure-C, zero-Python rewrite of [VisiData](https://www.visidata.org/) built on the Tam C libraries (`libtam`) and designed to run natively on any Tamlinux system—including bare Linux virtual terminals (`TERM=linux`).
 
-**Current implementation:** v0.4.0 implements CSV/TSV loading (disk files and piped `stdin`), grid navigation, column controls, atomic CSV/TSV saving, POSIX regex row selection and search, row deletion, filtered sheet extraction, stable typed single/multi-column sorting, in-place cell/row/column editing and duplication, a cross-sheet yank ring, per-sheet undo/redo, and a command log with CLI batch/interactive replay alongside the built-in demo. Analytical workflows below remain planned. Performance figures in this roadmap are targets; no startup, memory, or file-loading benchmarks have been published for `tam-data`.
+**Current implementation:** v0.5.0 implements CSV/TSV loading (disk files and piped `stdin`), grid navigation, column controls, atomic CSV/TSV saving, POSIX regex row selection and search, row deletion, filtered sheet extraction, stable typed single/multi-column sorting, in-place cell/row/column editing and duplication, a cross-sheet yank ring, per-sheet undo/redo, a command log with CLI batch/interactive replay, column aggregators (`+`/`z+`) with persistent footer summaries, frequency tables (`F`/`gF`) with histogram bars and `Enter`-to-dive extraction, a statistical Describe sheet (`I`), pivot (`W`) and melt (`M`), and stack-based sheet joins (`&`) alongside the built-in demo. Expression evaluation and metasheets/plotting below remain planned. Performance figures in this roadmap are targets; no startup, memory, or file-loading benchmarks have been published for `tam-data`.
 
 ---
 
@@ -36,7 +36,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 | **`v0.2.0`** | **Phase 1** | Native CSV/TSV parser, viewport rendering, grid navigation, atomic saver (**MVP**) | Completed |
 | **`v0.3.0`** | **Phase 2** | Row selection bitset, regex search, filtering, and typed multi-column sorting | Completed |
 | **`v0.4.0`** | **Phase 3** | In-place editing, clipboard/yank ring, undo/redo, command replay log | Completed |
-| **`v0.5.0`** | **Phase 4** | Frequency tables (`F`), aggregation summaries (`+`), describe sheet (`I`), pivot/melt, joins | Planned |
+| **`v0.5.0`** | **Phase 4** | Frequency tables (`F`), aggregation summaries (`+`), describe sheet (`I`), pivot/melt, joins | Completed |
 | **`v0.6.0`** | **Phase 5** | Embedded C expression engine (`td_expr`), computed/derived columns | Planned |
 | **`v1.0.0`** | **Phase 6** | Metasheets (`S`/`C`/`O`/Dir), command palette (`Space`/`Ctrl+H`), terminal plotting, extended formats | Planned |
 
@@ -121,17 +121,17 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 **Goal:** Recreate VisiData's signature analytical workflows in native C.
 
-- [ ] **Frequency Table (`F`, `gF`):**
+- [x] **Frequency Table (`F`, `gF`):**
   - Group by current column (or key columns), computing count, percentage, and terminal histogram bars (`*`).
   - Pressing `Enter` on any frequency bin pushes a filtered sheet of the underlying source rows.
-- [ ] **Column Aggregators (`+`, `z+`):**
+- [x] **Column Aggregators (`+`, `z+`):**
   - Built-in C aggregators: `count`, `distinct`, `nulls`, `sum`, `mean`, `median`, `min`, `max`, `stdev`, `pct90`, `pct95`, `pct99`.
   - One-off aggregation display (`z+`) and persistent footer summaries.
-- [ ] **Describe Sheet (`I`):**
+- [x] **Describe Sheet (`I`):**
   - Statistical summary sheet profiling every column's type distribution, missing count, min/max, mean, median, and standard deviation.
-- [ ] **Pivot (`W`) & Melt (`M`):**
+- [x] **Pivot (`W`) & Melt (`M`):**
   - Pivot key columns against a categorical column with aggregated values; unpivot (`melt`) wide tables into normalized rows.
-- [ ] **Sheet Joins (`&`):**
+- [x] **Sheet Joins (`&`):**
   - Join top two sheets on the stack by key columns (`inner`, `outer`, `full`, `diff`, `append`, `extend`).
 
 ---

@@ -82,6 +82,15 @@ static const td_cmd_meta_t td_cmd_table[] = {
     { TD_CMD_UNDO,                "undo",                "U",      false },
     { TD_CMD_REDO,                "redo",                "R",      false },
     { TD_CMD_SHOW_CMDLOG,         "show-cmdlog",         "D",      false },
+    { TD_CMD_FREQ_COL,            "freq-col",            "F",      false },
+    { TD_CMD_FREQ_KEYS,           "freq-keys",           "gF",     false },
+    { TD_CMD_AGGREGATOR,          "add-aggregator",      "+",      true  },
+    { TD_CMD_AGGREGATOR_ONE,      "calc-aggregator",     "z+",     true  },
+    { TD_CMD_DESCRIBE,            "describe-sheet",      "I",      false },
+    { TD_CMD_PIVOT,               "pivot-sheet",         "W",      false },
+    { TD_CMD_MELT,                "melt-sheet",          "M",      false },
+    { TD_CMD_JOIN,                "join-sheets",         "&",      true  },
+    { TD_CMD_DIVE_ROW,            "dive-row",            "Enter",  false },
     { TD_CMD_REDRAW,              "redraw",              "Ctrl+L", false }
 };
 

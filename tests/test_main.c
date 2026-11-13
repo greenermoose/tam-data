@@ -19,6 +19,7 @@ int main(void)
     test_input();
     test_clipboard();
     test_cmdlog();
+    test_agg();
 
     if (td_tests_failed) {
         fprintf(stderr, "%d of %d checks failed\n", td_tests_failed,

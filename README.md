@@ -5,12 +5,15 @@ A terminal spreadsheet multitool written in C, inspired by
 exploration and editing with a small runtime footprint and first-class Linux
 virtual console support, without a Python runtime.
 
-**Early development: the current version, 0.4.0, implements Phase 3 (in-place editing, clipboard/yank ring, undo/redo, and command log/replay) on top of Phases 1–2.**
+**Early development: the current version, 0.5.0, implements Phase 4 (aggregators, frequency tables, describe sheet, pivot/melt, and joins) on top of Phases 1–3.**
 It opens and saves CSV/TSV/`.vd` files, accepts piped `stdin`, and supports
 grid and column navigation, regex search and selection, row deletion, filtered
 sheet extraction, typed sorting, in-place cell/row/column editing and
-duplication, cross-sheet yank/paste, per-sheet undo/redo, and deterministic
-command replay (`-p` / `-b`). Analytical aggregations are the next milestone.
+duplication, cross-sheet yank/paste, per-sheet undo/redo, deterministic
+command replay (`-p` / `-b`), column aggregators with persistent footers,
+frequency tables with drill-down, statistical describe sheets, pivot/melt, and
+multi-mode sheet joins. Expression evaluation and metasheets/plotting are the
+next milestones.
 The long-term ambition is VisiData's core workflows; full feature parity is not
 a current capability.
 
@@ -37,6 +40,10 @@ name column, and the row-selection status bar. See
   lossless per-sheet undo/redo (`U`/`R`).
 - Tabular command log (`D`), `.vd` script saving (`Ctrl+S`), and deterministic
   CLI replay (`-p`/`--play`, `-b`/`--batch`).
+- Analytical workflows: 12 built-in aggregators (`+`/`z+`) with persistent
+  footer rows, frequency tables (`F`/`gF`) with histogram bars and
+  `Enter`-to-dive extraction, statistical Describe sheet (`I`), pivot (`W`),
+  melt (`M`), and stack joins (`&`: `inner`/`outer`/`full`/`diff`/`append`/`extend`).
 - Column hiding/unhiding (`-`/`gv`), reordering (`H`/`L`), renaming (`^`),
   autosizing/manual width (`_`/`g_`/`z_`), pinning (`!`), and type changes
   (`#`/`%`/`$`/`@`/`~`/`z~`).
@@ -123,6 +130,10 @@ The demo contains eight built-in rows; no input file is required.
 | `y` / `gy` / `zy` / `gzy` | Yank row / selected rows / cell / selected cells |
 | `p` / `P` / `zp` | Paste after / before / into cell(s) |
 | `U` / `R` / `D` | Undo / redo / open Command Log (`cmdlog`) |
+| `F` / `gF` / `Enter` | Frequency table (current col / key cols) / dive into bin |
+| `+` / `z+` | Attach persistent aggregator(s) / calculate one-off aggregator |
+| `I` / `W` / `M` | Describe summary sheet / Pivot / Melt wide table |
+| `&` | Join top two sheets (`inner`/`outer`/`full`/`diff`/`append`/`extend`) |
 | `[` / `]` / `g[` / `g]` | Sort ascending / descending (column or pinned key columns) |
 | `!` | Pin or unpin the current column |
 | `_` / `^` / `-` | Autosize / rename / hide the current column |
