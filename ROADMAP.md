@@ -35,8 +35,11 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 | **`v0.5.0`** | **Phase 4** | Frequency tables (`F`), aggregation summaries (`+`), describe sheet (`I`), pivot/melt, joins | Completed |
 | **`v0.6.0`** | **Phase 5** | Embedded C expression engine (`td_expr`), computed/derived columns | Completed |
 | **`v1.0.0`** | **Phase 6** | Metasheets (`S`/`C`/`O`/Dir), command palette (`Space`/`Ctrl+H`), terminal plotting, extended formats | Completed |
+| **`v1.0.1`** | **Perf Patch** | Reproducible benchmark harness, streaming JSONL, single-pass `describe`, CSV pre-sizing | In Progress |
+| **`v1.1.0`** | **Perf Minor** | String sort key caching, compact `td_val_t` cell layout, cold-start tuning | Planned |
 
 - **Patch Releases (`x.y.Z`)**: Bug fixes, terminal compatibility adjustments, performance enhancements, and sanitizer fixes without interface changes.
+- **Minor Releases (`1.Y.0`)**: Post-`1.0.0` structural performance improvements and backwards-compatible feature additions.
 - **Minor Releases (`0.Y.0`)**: Completion of each major roadmap phase leading up to `v1.0.0`.
 - **Major Release (`1.0.0`)**: Production-ready general availability with full VisiData core parity, complete metasheet support, and stable CLI/scripting behaviour.
 
@@ -163,3 +166,39 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
   - Terminal scatter plots and bar charts using Unicode Braille (`U+2800`..`U+28FF`) in graphical/UTF-8 terminals with automatic fallback to ASCII/block characters on bare Linux VTs.
 - [x] **Additional Zero-Python Format Loaders:**
   - Fixed-width text tables, JSON / JSON Lines (`.json`, `.jsonl`), INI / key-value files (`tam_ini`), and direct process table output via `tam_exec`.
+
+---
+
+## v1.0.1: Benchmarking & Hotspot Performance Fixes (SemVer `1.0.1` — Patch)
+
+**Goal:** Establish reproducible performance baselines and eliminate the highest-impact load and aggregation bottlenecks without changing data structures or CLI/file interfaces.
+
+- [x] **Reproducible Benchmark Harness (`bench/bench_tam_data.c`, `docs/BENCHMARKS.md`):**
+  - Zero-dependency C11 runner (`make bench`, `make bench-quick`) measuring warm/cold PTY first-frame startup, `100k`/`1M`-row CSV/TSV/JSONL load time and isolated `ru_maxrss`, and core analytical operations.
+  - Recorded `v1.0.0` baselines: `0.81–1.01 ms` warm PTY startup (`~2.4 ms` cold), `141.9 ms` / `202.1 MiB` RSS for `1M.csv`, `2071.7 ms` / `1037.6 MiB` RSS for `1M.jsonl`, and `4464.2 ms` for `1M` `describe_sheet`.
+- [ ] **Streaming JSONL Loader (`src/json.c`):**
+  - Replace full-file `tam_fs_read_file()` + `jval_t` AST array buffering with `mmap` + line-by-line parsing into a reusable scratch arena and indexed column lookup.
+  - **Target:** Reduce `1M.jsonl` peak RSS from `1037.6 MiB` to `<= 300 MiB` and load time from `2.07 s` to `<= 500 ms`.
+- [ ] **Single-Pass `describe_sheet` (`src/agg.c`):**
+  - Compute per-column count, nulls, min, max, mean, stdev, and median in a single pass instead of repeated `td_agg_compute_rows()` scans.
+  - **Target:** Reduce `1M` × 6-column `describe_sheet` from `4.46 s` to `< 1.0 s`.
+- [ ] **CSV Row Pre-Sizing & `madvise` (`src/csv.c`, `src/sheet.c`):**
+  - Apply `madvise(MADV_SEQUENTIAL)` on `mmap` inputs and estimate initial `row_cap` from file size / header-line width to eliminate ~15 `realloc()` doubling passes per column on `1M`-row files.
+- [ ] **Benchmark Refresh & Release (`v1.0.1`):**
+  - Re-run `make bench`, update [docs/BENCHMARKS.md](docs/BENCHMARKS.md) with `v1.0.1` before/after deltas, and verify `make test` (ASan/UBSan) and `make smoke`.
+
+---
+
+## v1.1.0: Structural Memory & Sorting Performance (SemVer `1.1.0` — Minor)
+
+**Goal:** Reduce per-cell memory footprint and accelerate string-heavy analytical operations for multi-million-row datasets.
+
+- [ ] **String Sort Key Caching (`src/sheet.c`):**
+  - Pre-extract/cache string slices across `nrows` before `qsort` in `td_sheet_sort_col()` instead of re-evaluating cells inside every comparator call.
+  - **Target:** Reduce `1M`-row `sort_col(str)` from `3.01 s` toward `< 1.0 s`.
+- [ ] **Compact `td_val_t` Cell Layout (`src/val.h`):**
+  - Evaluate shrinking `td_val_t` from 24 bytes to 16 bytes (e.g., packed tag/length or NaN-boxing) to cut cell-array RSS by ~33% (`144 MiB` → `~96 MiB` for 6M cells).
+- [ ] **Cold-Start & Render-Path Tuning:**
+  - Profile cold-cache PTY first-frame startup (`~2.4 ms` baseline) and viewport rendering to keep even cold TUI startup reliably under `2.0 ms`.
+- [ ] **Benchmark Refresh & Release (`v1.1.0`):**
+  - Re-run `make bench`, record `v1.1.0` baselines in [docs/BENCHMARKS.md](docs/BENCHMARKS.md), and verify `make test` and `make smoke`.

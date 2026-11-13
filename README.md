@@ -171,7 +171,7 @@ are implemented, passing unit tests do not establish large-file performance.
 
 ## License and development provenance
 
-Copyright (C) 2026 Fred Horch and contributors.
+The portions of tam-data written by a human are Copyright (C) 2026 by Fred Horch
 
 This project's code and documentation are licensed under the GNU General
 Public License, version 3 or (at your option) any later version
