@@ -13,6 +13,150 @@
 #define TD_WIDTH_SAMPLE_ROWS 1000
 #define TD_WIDTH_VIEWPORT_ROWS 128
 
+typedef enum {
+    TD_UNDO_CELLS = 0,
+    TD_UNDO_ROWS,
+    TD_UNDO_COL_META,
+    TD_UNDO_COL_VIS_ALL,
+    TD_UNDO_COL_SWAP,
+    TD_UNDO_COL_TYPE,
+    TD_UNDO_COL_ADD
+} td_undo_kind_t;
+
+typedef struct {
+    size_t phys_row;
+    size_t col;
+    td_val_t alt_val;
+} td_cell_delta_t;
+
+struct td_undo_entry {
+    td_undo_kind_t kind;
+    char desc[48];
+    size_t alt_cursor_row;
+    size_t alt_cursor_col;
+    union {
+        struct {
+            td_cell_delta_t *items;
+            size_t count;
+        } cells;
+        struct {
+            size_t alt_nrows;
+            size_t *alt_order;
+            uint64_t *alt_sel_bits;
+            size_t alt_sel_words;
+            size_t alt_nselected;
+        } rows;
+        struct {
+            size_t col;
+            int alt_width;
+            char *alt_name;
+            bool alt_is_key;
+            size_t alt_left_col;
+        } col_meta;
+        struct {
+            size_t ncols;
+            int *alt_widths;
+        } col_vis;
+        struct {
+            size_t col_a;
+            size_t col_b;
+        } col_swap;
+        struct {
+            size_t col;
+            td_type_t alt_type;
+            td_val_t *alt_cells;
+            size_t ncells;
+        } col_type;
+        struct {
+            size_t col_idx;
+            td_col_t saved_col;
+            bool present;
+        } col_add;
+    } u;
+};
+
+static void td_undo_entry_free(td_undo_entry_t *e)
+{
+    if (!e)
+        return;
+    switch (e->kind) {
+    case TD_UNDO_CELLS:
+        free(e->u.cells.items);
+        break;
+    case TD_UNDO_ROWS:
+        free(e->u.rows.alt_order);
+        free(e->u.rows.alt_sel_bits);
+        break;
+    case TD_UNDO_COL_META:
+    case TD_UNDO_COL_SWAP:
+        break;
+    case TD_UNDO_COL_VIS_ALL:
+        free(e->u.col_vis.alt_widths);
+        break;
+    case TD_UNDO_COL_TYPE:
+        free(e->u.col_type.alt_cells);
+        break;
+    case TD_UNDO_COL_ADD:
+        if (!e->u.col_add.present)
+            free(e->u.col_add.saved_col.cells);
+        break;
+    }
+    memset(e, 0, sizeof(*e));
+}
+
+static void td_undo_stack_free(td_undo_stack_t *st)
+{
+    if (!st)
+        return;
+    for (size_t i = 0; i < st->len; i++)
+        td_undo_entry_free(&st->items[i]);
+    free(st->items);
+    st->items = NULL;
+    st->len = 0;
+    st->cap = 0;
+}
+
+static bool td_undo_stack_push(td_undo_stack_t *st, const td_undo_entry_t *e)
+{
+    if (!st || !e)
+        return false;
+    if (st->len == st->cap) {
+        size_t new_cap = st->cap ? st->cap * 2 : 16;
+        td_undo_entry_t *items = realloc(st->items, new_cap * sizeof(*items));
+
+        if (!items)
+            return false;
+        st->items = items;
+        st->cap = new_cap;
+    }
+    st->items[st->len++] = *e;
+    return true;
+}
+
+static void td_undo_init_entry(td_undo_entry_t *e, const td_sheet_t *s,
+                               td_undo_kind_t kind, const char *desc)
+{
+    memset(e, 0, sizeof(*e));
+    e->kind = kind;
+    e->alt_cursor_row = s->cursor_row;
+    e->alt_cursor_col = s->cursor_col;
+    snprintf(e->desc, sizeof(e->desc), "%s", desc ? desc : "");
+}
+
+static bool td_undo_record(td_sheet_t *s, td_undo_entry_t *e)
+{
+    if (!s || !s->record_undo) {
+        td_undo_entry_free(e);
+        return true;
+    }
+    if (!td_undo_stack_push(&s->undo, e)) {
+        td_undo_entry_free(e);
+        return false;
+    }
+    td_undo_stack_free(&s->redo);
+    return true;
+}
+
 td_sheet_t *td_sheet_new(const char *name, const char *source_path)
 {
     td_sheet_t *s = calloc(1, sizeof(*s));
@@ -26,6 +170,7 @@ td_sheet_t *td_sheet_new(const char *name, const char *source_path)
         td_sheet_free(s);
         return NULL;
     }
+    s->record_undo = true;
     return s;
 }
 
@@ -33,6 +178,8 @@ void td_sheet_free(td_sheet_t *s)
 {
     if (!s)
         return;
+    td_undo_stack_free(&s->undo);
+    td_undo_stack_free(&s->redo);
     for (size_t c = 0; c < s->ncols; c++)
         free(s->cols[c].cells);
     free(s->cols);
@@ -423,11 +570,34 @@ static td_val_t td_cell_as_type(td_sheet_t *s, td_val_t v, td_type_t type)
     return td_val_parse((td_slice_t){ buf, (uint32_t)n }, type);
 }
 
-bool td_sheet_set_col_type(td_sheet_t *s, size_t col, td_type_t type)
+static bool td_undo_snapshot_rows(const td_sheet_t *s, td_undo_entry_t *e,
+                                  const char *desc)
 {
-    if (!s || col >= s->ncols)
-        return false;
+    td_undo_init_entry(e, s, TD_UNDO_ROWS, desc);
+    e->u.rows.alt_nrows = s->nrows;
+    e->u.rows.alt_nselected = s->nselected;
+    e->u.rows.alt_sel_words = s->sel_words;
+    if (s->nrows > 0 && s->row_order) {
+        e->u.rows.alt_order = malloc(s->nrows * sizeof(size_t));
+        if (!e->u.rows.alt_order)
+            return false;
+        memcpy(e->u.rows.alt_order, s->row_order, s->nrows * sizeof(size_t));
+    }
+    if (s->sel_words > 0 && s->sel_bits) {
+        e->u.rows.alt_sel_bits = malloc(s->sel_words * sizeof(uint64_t));
+        if (!e->u.rows.alt_sel_bits) {
+            free(e->u.rows.alt_order);
+            e->u.rows.alt_order = NULL;
+            return false;
+        }
+        memcpy(e->u.rows.alt_sel_bits, s->sel_bits,
+               s->sel_words * sizeof(uint64_t));
+    }
+    return true;
+}
 
+static bool td_sheet_set_col_type_raw(td_sheet_t *s, size_t col, td_type_t type)
+{
     for (size_t r = 0; r < s->phys_nrows; r++)
         s->cols[col].cells[r] = td_cell_as_type(s, s->cols[col].cells[r],
                                                 type);
@@ -436,15 +606,56 @@ bool td_sheet_set_col_type(td_sheet_t *s, size_t col, td_type_t type)
     return true;
 }
 
+bool td_sheet_set_col_type(td_sheet_t *s, size_t col, td_type_t type)
+{
+    td_undo_entry_t e;
+
+    if (!s || col >= s->ncols)
+        return false;
+    if (s->cols[col].type == type)
+        return true;
+
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_TYPE, "set column type");
+        e.u.col_type.col = col;
+        e.u.col_type.alt_type = s->cols[col].type;
+        e.u.col_type.ncells = s->phys_nrows;
+        if (s->phys_nrows > 0) {
+            e.u.col_type.alt_cells = malloc(s->phys_nrows * sizeof(td_val_t));
+            if (!e.u.col_type.alt_cells)
+                return false;
+            memcpy(e.u.col_type.alt_cells, s->cols[col].cells,
+                   s->phys_nrows * sizeof(td_val_t));
+        }
+    }
+
+    (void)td_sheet_set_col_type_raw(s, col, type);
+    if (s->record_undo)
+        (void)td_undo_record(s, &e);
+    return true;
+}
+
 bool td_sheet_rename_col(td_sheet_t *s, size_t col, const char *name)
 {
     char *copy;
+    td_undo_entry_t e;
 
     if (!s || col >= s->ncols)
         return false;
     copy = td_arena_strdup(&s->arena, name ? name : "");
     if (!copy)
         return false;
+
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_META, "rename column");
+        e.u.col_meta.col = col;
+        e.u.col_meta.alt_width = s->cols[col].width;
+        e.u.col_meta.alt_name = s->cols[col].name;
+        e.u.col_meta.alt_is_key = s->cols[col].is_key;
+        e.u.col_meta.alt_left_col = s->left_col;
+        (void)td_undo_record(s, &e);
+    }
+
     s->cols[col].name = copy;
     s->cols[col].cached_width = 0;
     return true;
@@ -452,8 +663,23 @@ bool td_sheet_rename_col(td_sheet_t *s, size_t col, const char *name)
 
 void td_sheet_hide_col(td_sheet_t *s, size_t col)
 {
+    td_undo_entry_t e;
+
     if (!s || col >= s->ncols)
         return;
+    if (s->cols[col].width == 0)
+        return;
+
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_META, "hide column");
+        e.u.col_meta.col = col;
+        e.u.col_meta.alt_width = s->cols[col].width;
+        e.u.col_meta.alt_name = s->cols[col].name;
+        e.u.col_meta.alt_is_key = s->cols[col].is_key;
+        e.u.col_meta.alt_left_col = s->left_col;
+        (void)td_undo_record(s, &e);
+    }
+
     s->cols[col].width = 0;
     s->cols[col].cached_width = 0;
     if (s->cursor_col == col) {
@@ -468,19 +694,29 @@ void td_sheet_hide_col(td_sheet_t *s, size_t col)
 
 void td_sheet_toggle_key_col(td_sheet_t *s, size_t col)
 {
+    td_undo_entry_t e;
+
     if (!s || col >= s->ncols)
         return;
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_META,
+                           s->cols[col].is_key ? "unpin key column"
+                                               : "pin key column");
+        e.u.col_meta.col = col;
+        e.u.col_meta.alt_width = s->cols[col].width;
+        e.u.col_meta.alt_name = s->cols[col].name;
+        e.u.col_meta.alt_is_key = s->cols[col].is_key;
+        e.u.col_meta.alt_left_col = s->left_col;
+        (void)td_undo_record(s, &e);
+    }
     s->cols[col].is_key = !s->cols[col].is_key;
     s->left_col = 0;
 }
 
-void td_sheet_autosize_col(td_sheet_t *s, size_t col)
+static int td_sheet_autosize_col_raw(td_sheet_t *s, size_t col)
 {
-    int exact;
+    int exact = td_compute_col_width(s, col, 0);
 
-    if (!s || col >= s->ncols)
-        return;
-    exact = td_compute_col_width(s, col, 0);
     if (s->cols[col].width > 0 && s->cols[col].width == exact &&
         exact > TD_AUTO_WIDTH_CAP) {
         s->cols[col].width = -TD_AUTO_WIDTH_CAP;
@@ -488,25 +724,87 @@ void td_sheet_autosize_col(td_sheet_t *s, size_t col)
         s->cols[col].width = exact;
     }
     s->cols[col].cached_width = 0;
+    return s->cols[col].width;
+}
+
+void td_sheet_autosize_col(td_sheet_t *s, size_t col)
+{
+    int old_w;
+    int new_w;
+    td_undo_entry_t e;
+
+    if (!s || col >= s->ncols)
+        return;
+    old_w = s->cols[col].width;
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_META, "autosize column");
+        e.u.col_meta.col = col;
+        e.u.col_meta.alt_width = old_w;
+        e.u.col_meta.alt_name = s->cols[col].name;
+        e.u.col_meta.alt_is_key = s->cols[col].is_key;
+        e.u.col_meta.alt_left_col = s->left_col;
+    }
+    new_w = td_sheet_autosize_col_raw(s, col);
+    if (s->record_undo) {
+        if (new_w != old_w)
+            (void)td_undo_record(s, &e);
+        else
+            td_undo_entry_free(&e);
+    }
 }
 
 void td_sheet_autosize_all_cols(td_sheet_t *s)
 {
-    if (!s)
+    td_undo_entry_t e;
+    bool changed = false;
+
+    if (!s || s->ncols == 0)
         return;
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_VIS_ALL, "autosize all columns");
+        e.u.col_vis.ncols = s->ncols;
+        e.u.col_vis.alt_widths = malloc(s->ncols * sizeof(int));
+        if (e.u.col_vis.alt_widths) {
+            for (size_t c = 0; c < s->ncols; c++)
+                e.u.col_vis.alt_widths[c] = s->cols[c].width;
+        }
+    }
     for (size_t c = 0; c < s->ncols; c++) {
-        if (s->cols[c].width != 0)
-            td_sheet_autosize_col(s, c);
+        if (s->cols[c].width != 0) {
+            int prev = s->cols[c].width;
+
+            if (td_sheet_autosize_col_raw(s, c) != prev)
+                changed = true;
+        }
+    }
+    if (s->record_undo) {
+        if (changed && e.u.col_vis.alt_widths)
+            (void)td_undo_record(s, &e);
+        else
+            td_undo_entry_free(&e);
     }
 }
 
 bool td_sheet_set_col_width(td_sheet_t *s, size_t col, int width)
 {
+    td_undo_entry_t e;
+
     if (!s || col >= s->ncols || width < 0)
         return false;
     if (width == 0) {
         td_sheet_hide_col(s, col);
         return true;
+    }
+    if (s->cols[col].width == width)
+        return true;
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_META, "set column width");
+        e.u.col_meta.col = col;
+        e.u.col_meta.alt_width = s->cols[col].width;
+        e.u.col_meta.alt_name = s->cols[col].name;
+        e.u.col_meta.alt_is_key = s->cols[col].is_key;
+        e.u.col_meta.alt_left_col = s->left_col;
+        (void)td_undo_record(s, &e);
     }
     s->cols[col].width = width;
     s->cols[col].cached_width = 0;
@@ -515,13 +813,32 @@ bool td_sheet_set_col_width(td_sheet_t *s, size_t col, int width)
 
 void td_sheet_unhide_all_cols(td_sheet_t *s)
 {
-    if (!s)
+    td_undo_entry_t e;
+    bool changed = false;
+
+    if (!s || s->ncols == 0)
         return;
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_VIS_ALL, "unhide all columns");
+        e.u.col_vis.ncols = s->ncols;
+        e.u.col_vis.alt_widths = malloc(s->ncols * sizeof(int));
+        if (e.u.col_vis.alt_widths) {
+            for (size_t c = 0; c < s->ncols; c++)
+                e.u.col_vis.alt_widths[c] = s->cols[c].width;
+        }
+    }
     for (size_t c = 0; c < s->ncols; c++) {
         if (s->cols[c].width == 0) {
             s->cols[c].width = -TD_AUTO_WIDTH_CAP;
             s->cols[c].cached_width = 0;
+            changed = true;
         }
+    }
+    if (s->record_undo) {
+        if (changed && e.u.col_vis.alt_widths)
+            (void)td_undo_record(s, &e);
+        else
+            td_undo_entry_free(&e);
     }
 }
 
@@ -530,6 +847,7 @@ bool td_sheet_move_col(td_sheet_t *s, size_t col, int dir)
     size_t target = SIZE_MAX;
     td_col_t tmp;
     bool key;
+    td_undo_entry_t e;
 
     if (!s || col >= s->ncols || dir == 0 || s->cols[col].width == 0)
         return false;
@@ -552,6 +870,13 @@ bool td_sheet_move_col(td_sheet_t *s, size_t col, int dir)
     }
     if (target == SIZE_MAX)
         return false;
+
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_SWAP, "move column");
+        e.u.col_swap.col_a = col;
+        e.u.col_swap.col_b = target;
+        (void)td_undo_record(s, &e);
+    }
 
     tmp = s->cols[col];
     s->cols[col] = s->cols[target];
@@ -1011,8 +1336,12 @@ static void td_clamp_cursor_after_delete(td_sheet_t *s)
 bool td_sheet_delete_row(td_sheet_t *s, size_t vis_row)
 {
     size_t phys;
+    td_undo_entry_t e;
 
     if (!s || vis_row >= s->nrows || !s->row_order)
+        return false;
+
+    if (s->record_undo && !td_undo_snapshot_rows(s, &e, "delete row"))
         return false;
 
     phys = s->row_order[vis_row];
@@ -1023,6 +1352,8 @@ bool td_sheet_delete_row(td_sheet_t *s, size_t vis_row)
     s->nrows--;
     td_clamp_cursor_after_delete(s);
     td_invalidate_auto_widths(s);
+    if (s->record_undo)
+        (void)td_undo_record(s, &e);
     return true;
 }
 
@@ -1030,8 +1361,13 @@ size_t td_sheet_delete_selected(td_sheet_t *s)
 {
     size_t write = 0;
     size_t deleted = 0;
+    td_undo_entry_t e;
 
     if (!s || s->nrows == 0 || s->nselected == 0 || !s->row_order)
+        return 0;
+
+    if (s->record_undo &&
+        !td_undo_snapshot_rows(s, &e, "delete selected rows"))
         return 0;
 
     for (size_t vr = 0; vr < s->nrows; vr++) {
@@ -1048,6 +1384,10 @@ size_t td_sheet_delete_selected(td_sheet_t *s)
     if (deleted > 0) {
         td_clamp_cursor_after_delete(s);
         td_invalidate_auto_widths(s);
+        if (s->record_undo)
+            (void)td_undo_record(s, &e);
+    } else if (s->record_undo) {
+        td_undo_entry_free(&e);
     }
     return deleted;
 }
@@ -1193,6 +1533,7 @@ bool td_sheet_sort_cols(td_sheet_t *s, const size_t *cols, size_t ncols,
 {
     td_sort_ctx_t ctx;
     size_t *scratch;
+    td_undo_entry_t e;
 
     if (!s || !cols || ncols == 0 || s->ncols == 0)
         return false;
@@ -1206,6 +1547,13 @@ bool td_sheet_sort_cols(td_sheet_t *s, const size_t *cols, size_t ncols,
     scratch = malloc(s->nrows * sizeof(*scratch));
     if (!scratch)
         return false;
+
+    if (s->record_undo &&
+        !td_undo_snapshot_rows(s, &e,
+                               desc ? "sort descending" : "sort ascending")) {
+        free(scratch);
+        return false;
+    }
 
     ctx.sheet = s;
     ctx.cols = cols;
@@ -1228,6 +1576,8 @@ bool td_sheet_sort_cols(td_sheet_t *s, const size_t *cols, size_t ncols,
 
     free(scratch);
     td_invalidate_auto_widths(s);
+    if (s->record_undo)
+        (void)td_undo_record(s, &e);
     return true;
 }
 
@@ -1266,4 +1616,627 @@ bool td_sheet_sort_keys(td_sheet_t *s, bool desc)
     if (keys != small)
         free(keys);
     return ok;
+}
+
+void td_sheet_set_undo_recording(td_sheet_t *s, bool enabled)
+{
+    if (s)
+        s->record_undo = enabled;
+}
+
+bool td_sheet_can_undo(const td_sheet_t *s)
+{
+    return s && s->undo.len > 0;
+}
+
+bool td_sheet_can_redo(const td_sheet_t *s)
+{
+    return s && s->redo.len > 0;
+}
+
+static bool td_undo_swap_rows(td_sheet_t *s, td_undo_entry_t *e)
+{
+    size_t *cur_order = NULL;
+    uint64_t *cur_bits = NULL;
+    size_t cur_nrows = s->nrows;
+    size_t cur_nselected = s->nselected;
+    size_t cur_sel_words = s->sel_words;
+
+    if (e->u.rows.alt_nrows > 0 &&
+        !td_sheet_grow_rows(s, e->u.rows.alt_nrows))
+        return false;
+
+    if (cur_nrows > 0 && s->row_order) {
+        cur_order = malloc(cur_nrows * sizeof(size_t));
+        if (!cur_order)
+            return false;
+        memcpy(cur_order, s->row_order, cur_nrows * sizeof(size_t));
+    }
+    if (cur_sel_words > 0 && s->sel_bits) {
+        cur_bits = malloc(cur_sel_words * sizeof(uint64_t));
+        if (!cur_bits) {
+            free(cur_order);
+            return false;
+        }
+        memcpy(cur_bits, s->sel_bits, cur_sel_words * sizeof(uint64_t));
+    }
+
+    if (e->u.rows.alt_nrows > 0 && e->u.rows.alt_order && s->row_order)
+        memcpy(s->row_order, e->u.rows.alt_order,
+               e->u.rows.alt_nrows * sizeof(size_t));
+    if (s->sel_bits && s->sel_words > 0) {
+        size_t copy_words = s->sel_words < e->u.rows.alt_sel_words
+                                ? s->sel_words
+                                : e->u.rows.alt_sel_words;
+
+        memset(s->sel_bits, 0, s->sel_words * sizeof(uint64_t));
+        if (copy_words > 0 && e->u.rows.alt_sel_bits)
+            memcpy(s->sel_bits, e->u.rows.alt_sel_bits,
+                   copy_words * sizeof(uint64_t));
+    }
+
+    free(e->u.rows.alt_order);
+    free(e->u.rows.alt_sel_bits);
+    s->nrows = e->u.rows.alt_nrows;
+    s->nselected = e->u.rows.alt_nselected;
+    e->u.rows.alt_order = cur_order;
+    e->u.rows.alt_nrows = cur_nrows;
+    e->u.rows.alt_sel_bits = cur_bits;
+    e->u.rows.alt_sel_words = cur_sel_words;
+    e->u.rows.alt_nselected = cur_nselected;
+    td_invalidate_auto_widths(s);
+    return true;
+}
+
+static bool td_undo_swap_col_add(td_sheet_t *s, td_undo_entry_t *e)
+{
+    size_t idx = e->u.col_add.col_idx;
+
+    if (e->u.col_add.present) {
+        if (idx >= s->ncols)
+            return false;
+        e->u.col_add.saved_col = s->cols[idx];
+        if (idx + 1 < s->ncols)
+            memmove(&s->cols[idx], &s->cols[idx + 1],
+                    (s->ncols - idx - 1) * sizeof(s->cols[0]));
+        s->ncols--;
+        e->u.col_add.present = false;
+        return true;
+    }
+
+    if (idx > s->ncols || !td_sheet_grow_cols(s, s->ncols + 1))
+        return false;
+    if (s->row_cap > 0) {
+        td_val_t *cells = realloc(e->u.col_add.saved_col.cells,
+                                  s->row_cap * sizeof(td_val_t));
+        if (!cells)
+            return false;
+        e->u.col_add.saved_col.cells = cells;
+    }
+    if (idx < s->ncols)
+        memmove(&s->cols[idx + 1], &s->cols[idx],
+                (s->ncols - idx) * sizeof(s->cols[0]));
+    s->cols[idx] = e->u.col_add.saved_col;
+    s->cols[idx].cached_width = 0;
+    memset(&e->u.col_add.saved_col, 0, sizeof(e->u.col_add.saved_col));
+    s->ncols++;
+    e->u.col_add.present = true;
+    return true;
+}
+
+static bool td_undo_apply(td_sheet_t *s, td_undo_stack_t *from,
+                          td_undo_stack_t *to, char *desc_out, size_t desc_cap)
+{
+    td_undo_entry_t e;
+    size_t cur_cr;
+    size_t cur_cc;
+    bool ok = true;
+
+    if (desc_out && desc_cap > 0)
+        desc_out[0] = '\0';
+    if (!s || !from || from->len == 0)
+        return false;
+
+    e = from->items[--from->len];
+    cur_cr = s->cursor_row;
+    cur_cc = s->cursor_col;
+
+    switch (e.kind) {
+    case TD_UNDO_CELLS:
+        for (size_t i = 0; i < e.u.cells.count; i++) {
+            td_cell_delta_t *d = &e.u.cells.items[i];
+
+            if (d->phys_row < s->phys_nrows && d->col < s->ncols) {
+                td_val_t tmp = s->cols[d->col].cells[d->phys_row];
+
+                s->cols[d->col].cells[d->phys_row] = d->alt_val;
+                d->alt_val = tmp;
+                s->cols[d->col].cached_width = 0;
+            }
+        }
+        break;
+    case TD_UNDO_ROWS:
+        ok = td_undo_swap_rows(s, &e);
+        break;
+    case TD_UNDO_COL_META: {
+        size_t c = e.u.col_meta.col;
+
+        if (c < s->ncols) {
+            int tmp_w = s->cols[c].width;
+            char *tmp_n = s->cols[c].name;
+            bool tmp_k = s->cols[c].is_key;
+            size_t tmp_l = s->left_col;
+
+            s->cols[c].width = e.u.col_meta.alt_width;
+            s->cols[c].name = e.u.col_meta.alt_name;
+            s->cols[c].is_key = e.u.col_meta.alt_is_key;
+            s->cols[c].cached_width = 0;
+            s->left_col = e.u.col_meta.alt_left_col;
+
+            e.u.col_meta.alt_width = tmp_w;
+            e.u.col_meta.alt_name = tmp_n;
+            e.u.col_meta.alt_is_key = tmp_k;
+            e.u.col_meta.alt_left_col = tmp_l;
+        }
+        break;
+    }
+    case TD_UNDO_COL_VIS_ALL:
+        for (size_t c = 0; c < e.u.col_vis.ncols && c < s->ncols; c++) {
+            int tmp_w = s->cols[c].width;
+
+            s->cols[c].width = e.u.col_vis.alt_widths[c];
+            s->cols[c].cached_width = 0;
+            e.u.col_vis.alt_widths[c] = tmp_w;
+        }
+        break;
+    case TD_UNDO_COL_SWAP: {
+        size_t a = e.u.col_swap.col_a;
+        size_t b = e.u.col_swap.col_b;
+
+        if (a < s->ncols && b < s->ncols) {
+            td_col_t tmp = s->cols[a];
+
+            s->cols[a] = s->cols[b];
+            s->cols[b] = tmp;
+        }
+        break;
+    }
+    case TD_UNDO_COL_TYPE: {
+        size_t c = e.u.col_type.col;
+
+        if (c < s->ncols) {
+            td_type_t tmp_t = s->cols[c].type;
+            size_t n = e.u.col_type.ncells;
+
+            if (n > s->phys_nrows)
+                n = s->phys_nrows;
+            for (size_t r = 0; r < n; r++) {
+                td_val_t tmp = s->cols[c].cells[r];
+
+                s->cols[c].cells[r] = e.u.col_type.alt_cells[r];
+                e.u.col_type.alt_cells[r] = tmp;
+            }
+            s->cols[c].type = e.u.col_type.alt_type;
+            s->cols[c].cached_width = 0;
+            e.u.col_type.alt_type = tmp_t;
+        }
+        break;
+    }
+    case TD_UNDO_COL_ADD:
+        ok = td_undo_swap_col_add(s, &e);
+        break;
+    }
+
+    if (!ok) {
+        if (!td_undo_stack_push(from, &e))
+            td_undo_entry_free(&e);
+        return false;
+    }
+
+    if (desc_out && desc_cap > 0)
+        snprintf(desc_out, desc_cap, "%s", e.desc);
+
+    s->cursor_row = e.alt_cursor_row;
+    s->cursor_col = e.alt_cursor_col;
+    if (s->nrows == 0)
+        s->cursor_row = 0;
+    else if (s->cursor_row >= s->nrows)
+        s->cursor_row = s->nrows - 1;
+    if (s->ncols == 0)
+        s->cursor_col = 0;
+    else if (s->cursor_col >= s->ncols)
+        s->cursor_col = s->ncols - 1;
+
+    e.alt_cursor_row = cur_cr;
+    e.alt_cursor_col = cur_cc;
+    if (!td_undo_stack_push(to, &e))
+        td_undo_entry_free(&e);
+    return true;
+}
+
+bool td_sheet_undo(td_sheet_t *s, char *desc_out, size_t desc_cap)
+{
+    if (!s)
+        return false;
+    return td_undo_apply(s, &s->undo, &s->redo, desc_out, desc_cap);
+}
+
+bool td_sheet_redo(td_sheet_t *s, char *desc_out, size_t desc_cap)
+{
+    if (!s)
+        return false;
+    return td_undo_apply(s, &s->redo, &s->undo, desc_out, desc_cap);
+}
+
+static td_val_t td_parse_text_for_col(td_sheet_t *s, size_t col,
+                                      const char *text, bool *ok)
+{
+    td_type_t type = s->cols[col].type;
+    char *copy;
+    td_val_t v;
+
+    *ok = true;
+    if (!text || !text[0])
+        return TD_VAL_NULL;
+
+    copy = td_arena_strdup(&s->arena, text);
+    if (!copy) {
+        *ok = false;
+        return TD_VAL_ERR;
+    }
+    v = td_val_parse(td_slice_from_cstr(copy), type);
+    if (v.type == TD_TYPE_ERR)
+        v.as.s = td_slice_from_cstr(copy);
+    return v;
+}
+
+static td_val_t td_adapt_val_for_col(td_sheet_t *s, size_t col, td_val_t src,
+                                     bool *ok)
+{
+    td_type_t target = s->cols[col].type;
+    td_val_t cloned;
+
+    *ok = true;
+    if (src.type == TD_TYPE_NULL)
+        return TD_VAL_NULL;
+
+    cloned = td_clone_val_to_arena(&s->arena, src, ok);
+    if (!*ok)
+        return TD_VAL_ERR;
+
+    if (target == TD_TYPE_ANY || cloned.type == target)
+        return cloned;
+
+    if (cloned.type == TD_TYPE_ERR && cloned.as.s.data) {
+        td_val_t parsed = td_val_parse(cloned.as.s, target);
+
+        if (parsed.type == TD_TYPE_ERR)
+            parsed.as.s = cloned.as.s;
+        return parsed;
+    }
+
+    td_val_t conv = td_cell_as_type(s, cloned, target);
+
+    if (conv.type == TD_TYPE_ERR &&
+        (cloned.type == TD_TYPE_ANY || cloned.type == TD_TYPE_STR) &&
+        cloned.as.s.data)
+        conv.as.s = cloned.as.s;
+    return conv;
+}
+
+bool td_sheet_apply_cell_batch(td_sheet_t *s, const size_t *vis_rows,
+                               const size_t *cols, const td_val_t *vals,
+                               size_t count, const char *desc)
+{
+    td_undo_entry_t e;
+    size_t applied = 0;
+
+    if (!s || !vis_rows || !cols || !vals || count == 0 || !s->row_order)
+        return false;
+
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_CELLS, desc ? desc : "edit cells");
+        e.u.cells.items = malloc(count * sizeof(td_cell_delta_t));
+        if (!e.u.cells.items)
+            return false;
+    }
+
+    for (size_t i = 0; i < count; i++) {
+        size_t vr = vis_rows[i];
+        size_t col = cols[i];
+        size_t phys;
+        bool ok = true;
+        td_val_t nv;
+
+        if (vr >= s->nrows || col >= s->ncols)
+            continue;
+        phys = s->row_order[vr];
+        nv = td_adapt_val_for_col(s, col, vals[i], &ok);
+        if (!ok) {
+            if (s->record_undo)
+                td_undo_entry_free(&e);
+            return false;
+        }
+        if (s->record_undo) {
+            e.u.cells.items[applied].phys_row = phys;
+            e.u.cells.items[applied].col = col;
+            e.u.cells.items[applied].alt_val = s->cols[col].cells[phys];
+        }
+        s->cols[col].cells[phys] = nv;
+        s->cols[col].cached_width = 0;
+        applied++;
+    }
+
+    if (s->record_undo) {
+        if (applied > 0) {
+            e.u.cells.count = applied;
+            (void)td_undo_record(s, &e);
+        } else {
+            td_undo_entry_free(&e);
+        }
+    }
+    return applied > 0;
+}
+
+bool td_sheet_edit_cell(td_sheet_t *s, size_t vis_row, size_t col,
+                        const char *text)
+{
+    bool ok = true;
+    td_val_t v;
+
+    if (!s || vis_row >= s->nrows || col >= s->ncols)
+        return false;
+    v = td_parse_text_for_col(s, col, text, &ok);
+    if (!ok)
+        return false;
+    return td_sheet_apply_cell_batch(s, &vis_row, &col, &v, 1, "edit cell");
+}
+
+size_t td_sheet_edit_selected(td_sheet_t *s, size_t col, const char *text)
+{
+    bool ok = true;
+    td_val_t v;
+    size_t *vrows;
+    size_t *cols;
+    td_val_t *vals;
+    size_t n = 0;
+
+    if (!s || s->nrows == 0 || s->nselected == 0 || col >= s->ncols ||
+        !s->row_order)
+        return 0;
+
+    v = td_parse_text_for_col(s, col, text, &ok);
+    if (!ok)
+        return 0;
+
+    vrows = malloc(s->nrows * sizeof(size_t));
+    cols = malloc(s->nrows * sizeof(size_t));
+    vals = malloc(s->nrows * sizeof(td_val_t));
+    if (!vrows || !cols || !vals) {
+        free(vrows);
+        free(cols);
+        free(vals);
+        return 0;
+    }
+
+    for (size_t vr = 0; vr < s->nrows; vr++) {
+        if (td_sheet_is_selected(s, s->row_order[vr])) {
+            vrows[n] = vr;
+            cols[n] = col;
+            vals[n] = v;
+            n++;
+        }
+    }
+
+    if (n > 0)
+        (void)td_sheet_apply_cell_batch(s, vrows, cols, vals, n,
+                                        "edit selected");
+    free(vrows);
+    free(cols);
+    free(vals);
+    return n;
+}
+
+bool td_sheet_clear_cell(td_sheet_t *s, size_t vis_row, size_t col)
+{
+    td_val_t v = TD_VAL_NULL;
+
+    if (!s || vis_row >= s->nrows || col >= s->ncols)
+        return false;
+    return td_sheet_apply_cell_batch(s, &vis_row, &col, &v, 1, "clear cell");
+}
+
+size_t td_sheet_clear_selected(td_sheet_t *s, size_t col)
+{
+    if (!s || s->nselected == 0 || col >= s->ncols)
+        return 0;
+    return td_sheet_edit_selected(s, col, "");
+}
+
+bool td_sheet_insert_rows_populated(td_sheet_t *s, size_t vis_pos,
+                                    size_t nrows, size_t ncols,
+                                    const td_val_t *cells, const char *desc)
+{
+    td_undo_entry_t e;
+
+    if (!s || nrows == 0)
+        return false;
+    if (vis_pos > s->nrows)
+        vis_pos = s->nrows;
+    if (s->phys_nrows > SIZE_MAX - nrows ||
+        !td_sheet_grow_rows(s, s->phys_nrows + nrows))
+        return false;
+
+    if (s->record_undo &&
+        !td_undo_snapshot_rows(s, &e, desc ? desc : "insert rows"))
+        return false;
+
+    if (vis_pos < s->nrows)
+        memmove(&s->row_order[vis_pos + nrows], &s->row_order[vis_pos],
+                (s->nrows - vis_pos) * sizeof(s->row_order[0]));
+
+    for (size_t r = 0; r < nrows; r++) {
+        size_t phys = s->phys_nrows++;
+
+        for (size_t c = 0; c < s->ncols; c++) {
+            td_val_t v = TD_VAL_NULL;
+
+            if (cells && c < ncols) {
+                bool ok = true;
+
+                v = td_adapt_val_for_col(s, c, cells[r * ncols + c], &ok);
+                if (!ok)
+                    v = TD_VAL_ERR;
+            }
+            s->cols[c].cells[phys] = v;
+            s->cols[c].cached_width = 0;
+        }
+        s->row_order[vis_pos + r] = phys;
+    }
+
+    s->nrows += nrows;
+    s->cursor_row = vis_pos;
+    if (s->record_undo)
+        (void)td_undo_record(s, &e);
+    return true;
+}
+
+bool td_sheet_insert_rows(td_sheet_t *s, size_t vis_pos, size_t count)
+{
+    return td_sheet_insert_rows_populated(s, vis_pos, count, 0, NULL,
+                                          count == 1 ? "add row" : "add rows");
+}
+
+bool td_sheet_dup_row(td_sheet_t *s, size_t vis_row)
+{
+    td_val_t *row_vals;
+    size_t phys;
+    bool ok;
+
+    if (!s || vis_row >= s->nrows || !s->row_order)
+        return false;
+    if (s->ncols == 0)
+        return td_sheet_insert_rows_populated(s, vis_row + 1, 1, 0, NULL,
+                                              "duplicate row");
+
+    row_vals = malloc(s->ncols * sizeof(td_val_t));
+    if (!row_vals)
+        return false;
+    phys = s->row_order[vis_row];
+    for (size_t c = 0; c < s->ncols; c++)
+        row_vals[c] = s->cols[c].cells[phys];
+
+    ok = td_sheet_insert_rows_populated(s, vis_row + 1, 1, s->ncols, row_vals,
+                                        "duplicate row");
+    free(row_vals);
+    return ok;
+}
+
+static bool td_col_name_exists(const td_sheet_t *s, const char *name)
+{
+    for (size_t c = 0; c < s->ncols; c++) {
+        if (s->cols[c].name && strcmp(s->cols[c].name, name) == 0)
+            return true;
+    }
+    return false;
+}
+
+static size_t td_sheet_insert_col_at(td_sheet_t *s, size_t col_pos,
+                                     const char *name, td_type_t type,
+                                     int width, size_t copy_from,
+                                     const char *desc)
+{
+    td_col_t col;
+    td_undo_entry_t e;
+
+    if (!s || col_pos > s->ncols || !td_sheet_grow_cols(s, s->ncols + 1))
+        return SIZE_MAX;
+
+    memset(&col, 0, sizeof(col));
+    col.name = td_arena_strdup(&s->arena, name ? name : "");
+    if (!col.name)
+        return SIZE_MAX;
+    col.type = type;
+    col.width = width;
+    col.is_key = false;
+
+    if (s->row_cap > 0) {
+        col.cells = malloc(s->row_cap * sizeof(td_val_t));
+        if (!col.cells)
+            return SIZE_MAX;
+        for (size_t r = 0; r < s->row_cap; r++)
+            col.cells[r] = TD_VAL_NULL;
+        if (copy_from < s->ncols) {
+            for (size_t r = 0; r < s->phys_nrows; r++) {
+                bool ok = true;
+
+                col.cells[r] = td_clone_val_to_arena(
+                    &s->arena, s->cols[copy_from].cells[r], &ok);
+                if (!ok) {
+                    free(col.cells);
+                    return SIZE_MAX;
+                }
+            }
+        }
+    }
+
+    if (s->record_undo) {
+        td_undo_init_entry(&e, s, TD_UNDO_COL_ADD, desc);
+        e.u.col_add.col_idx = col_pos;
+        e.u.col_add.present = true;
+    }
+
+    if (col_pos < s->ncols)
+        memmove(&s->cols[col_pos + 1], &s->cols[col_pos],
+                (s->ncols - col_pos) * sizeof(s->cols[0]));
+    s->cols[col_pos] = col;
+    s->ncols++;
+    s->cursor_col = col_pos;
+
+    if (s->record_undo)
+        (void)td_undo_record(s, &e);
+    return col_pos;
+}
+
+size_t td_sheet_append_blank_col(td_sheet_t *s)
+{
+    char name[64];
+    size_t n;
+
+    if (!s)
+        return SIZE_MAX;
+    n = s->ncols + 1;
+    do {
+        snprintf(name, sizeof(name), "col%zu", n++);
+    } while (td_col_name_exists(s, name));
+
+    return td_sheet_insert_col_at(s, s->ncols, name, TD_TYPE_ANY,
+                                  -TD_AUTO_WIDTH_CAP, SIZE_MAX, "add column");
+}
+
+bool td_sheet_dup_col(td_sheet_t *s, size_t col)
+{
+    const char *base;
+    size_t len;
+    char *name;
+    size_t idx;
+    int width;
+
+    if (!s || col >= s->ncols)
+        return false;
+    base = (s->cols[col].name && s->cols[col].name[0]) ? s->cols[col].name
+                                                       : "col";
+    len = strlen(base) + 16;
+    name = malloc(len);
+    if (!name)
+        return false;
+    snprintf(name, len, "%s_copy", base);
+    for (size_t suffix = 2; td_col_name_exists(s, name); suffix++)
+        snprintf(name, len, "%s_copy%zu", base, suffix);
+
+    width = s->cols[col].width != 0 ? s->cols[col].width : -TD_AUTO_WIDTH_CAP;
+    idx = td_sheet_insert_col_at(s, col + 1, name, s->cols[col].type, width,
+                                 col, "duplicate column");
+    free(name);
+    return idx != SIZE_MAX;
 }

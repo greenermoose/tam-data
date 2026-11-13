@@ -2,7 +2,7 @@
 
 This document outlines the architectural plan and phased roadmap for `tam-data`: a pure-C, zero-Python rewrite of [VisiData](https://www.visidata.org/) built on the Tam C libraries (`libtam`) and designed to run natively on any Tamlinux system—including bare Linux virtual terminals (`TERM=linux`).
 
-**Current implementation:** v0.3.0 implements CSV/TSV loading (disk files and piped `stdin`), grid navigation, column controls, atomic CSV/TSV saving, POSIX regex row selection and search, row deletion, filtered sheet extraction, and stable typed single/multi-column sorting alongside the built-in demo. In-place cell editing, undo/redo, and analytical workflows below are planned. Performance figures in this roadmap are targets; no startup, memory, or file-loading benchmarks have been published for `tam-data`.
+**Current implementation:** v0.4.0 implements CSV/TSV loading (disk files and piped `stdin`), grid navigation, column controls, atomic CSV/TSV saving, POSIX regex row selection and search, row deletion, filtered sheet extraction, stable typed single/multi-column sorting, in-place cell/row/column editing and duplication, a cross-sheet yank ring, per-sheet undo/redo, and a command log with CLI batch/interactive replay alongside the built-in demo. Analytical workflows below remain planned. Performance figures in this roadmap are targets; no startup, memory, or file-loading benchmarks have been published for `tam-data`.
 
 ---
 
@@ -35,7 +35,7 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 | **`v0.1.0`** | **Phase 0** | Foundation, build/sanitizers, VT terminal engine, core data model, demo shell | Completed |
 | **`v0.2.0`** | **Phase 1** | Native CSV/TSV parser, viewport rendering, grid navigation, atomic saver (**MVP**) | Completed |
 | **`v0.3.0`** | **Phase 2** | Row selection bitset, regex search, filtering, and typed multi-column sorting | Completed |
-| **`v0.4.0`** | **Phase 3** | In-place editing, clipboard/yank ring, undo/redo, command replay log | Planned |
+| **`v0.4.0`** | **Phase 3** | In-place editing, clipboard/yank ring, undo/redo, command replay log | Completed |
 | **`v0.5.0`** | **Phase 4** | Frequency tables (`F`), aggregation summaries (`+`), describe sheet (`I`), pivot/melt, joins | Planned |
 | **`v0.6.0`** | **Phase 5** | Embedded C expression engine (`td_expr`), computed/derived columns | Planned |
 | **`v1.0.0`** | **Phase 6** | Metasheets (`S`/`C`/`O`/Dir), command palette (`Space`/`Ctrl+H`), terminal plotting, extended formats | Planned |
@@ -105,15 +105,15 @@ This document outlines the architectural plan and phased roadmap for `tam-data`:
 
 **Goal:** Turn `tam-data` from an interactive explorer into a full tabular editor with reproducible command logs.
 
-- [ ] **Cell & Bulk Editing:**
-  - Inline cell editing (`e`) with history and cursor movement; set value across all selected rows (`ge`).
-  - Insert blank row (`a`, `ga`), append column (`za`), and duplicate row/column.
-- [ ] **Yank, Paste & Deletion:**
-  - Internal cell and row yank ring (`y`, `gy`, `p`, `P`).
-- [ ] **Undo / Redo (`U` / `R`):**
-  - Reversible action log per sheet for cell edits, row deletions, column hides, and sorts.
-- [ ] **Command Log (`D`) & Replay (`-p`):**
-  - Record executed commands into a tabular Command Log sheet (`cmdlog`) that can be viewed, edited, saved as a `.vd` / `.tsv` script, and replayed deterministically from the CLI.
+- [x] **Cell & Bulk Editing:**
+  - Inline cell editing (`e`) with per-prompt history (`Up`/`Down`/`Ctrl+P`/`Ctrl+N`) and cursor movement; set value across all selected rows (`ge`); clear cell / selected cells (`zd`, `gzd`).
+  - Insert blank row (`a`, `ga`), append blank column (`za`), and duplicate row/column (`g"`, `z"`).
+- [x] **Yank, Paste & Deletion:**
+  - Internal cross-sheet cell and row yank ring (`y`, `gy`, `zy`, `gzy`, `p`, `P`, `zp`) plus Vim-style delete-to-yank-ring (`d`, `gd`).
+- [x] **Undo / Redo (`U` / `R`):**
+  - Lossless reversible action log per sheet for cell edits, row insertions/deletions, column appends/hides/renames/reordering/type changes, and sorts.
+- [x] **Command Log (`D`) & Replay (`-p`, `-b`):**
+  - Record executed navigation and mutation commands into a tabular Command Log sheet (`cmdlog`) that can be viewed, edited, saved as a `.vd` / `.tsv` script, and replayed deterministically from the CLI (`-p`, optionally `-b` for batch mode).
 
 ---
 

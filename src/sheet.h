@@ -20,6 +20,14 @@ typedef struct {
     td_val_t *cells;  /* row_cap contiguous cells */
 } td_col_t;
 
+typedef struct td_undo_entry td_undo_entry_t;
+
+typedef struct {
+    td_undo_entry_t *items;
+    size_t len;
+    size_t cap;
+} td_undo_stack_t;
+
 typedef struct {
     char *name;
     char *source_path;
@@ -50,6 +58,10 @@ typedef struct {
     char *last_search;
     bool search_all_cols;
     int search_dir;      /* +1 forward, -1 backward */
+
+    td_undo_stack_t undo;
+    td_undo_stack_t redo;
+    bool record_undo;
 } td_sheet_t;
 
 typedef struct {
@@ -109,6 +121,28 @@ bool td_sheet_sort_cols(td_sheet_t *s, const size_t *cols, size_t ncols,
                         bool desc);
 bool td_sheet_sort_col(td_sheet_t *s, size_t col, bool desc);
 bool td_sheet_sort_keys(td_sheet_t *s, bool desc);
+
+void td_sheet_set_undo_recording(td_sheet_t *s, bool enabled);
+bool td_sheet_can_undo(const td_sheet_t *s);
+bool td_sheet_can_redo(const td_sheet_t *s);
+bool td_sheet_undo(td_sheet_t *s, char *desc_out, size_t desc_cap);
+bool td_sheet_redo(td_sheet_t *s, char *desc_out, size_t desc_cap);
+
+bool td_sheet_edit_cell(td_sheet_t *s, size_t vis_row, size_t col,
+                        const char *text);
+size_t td_sheet_edit_selected(td_sheet_t *s, size_t col, const char *text);
+bool td_sheet_clear_cell(td_sheet_t *s, size_t vis_row, size_t col);
+size_t td_sheet_clear_selected(td_sheet_t *s, size_t col);
+bool td_sheet_insert_rows(td_sheet_t *s, size_t vis_pos, size_t count);
+bool td_sheet_insert_rows_populated(td_sheet_t *s, size_t vis_pos,
+                                    size_t nrows, size_t ncols,
+                                    const td_val_t *cells, const char *desc);
+bool td_sheet_apply_cell_batch(td_sheet_t *s, const size_t *vis_rows,
+                               const size_t *cols, const td_val_t *vals,
+                               size_t count, const char *desc);
+size_t td_sheet_append_blank_col(td_sheet_t *s);
+bool td_sheet_dup_row(td_sheet_t *s, size_t vis_row);
+bool td_sheet_dup_col(td_sheet_t *s, size_t col);
 
 bool td_stack_push(td_stack_t *st, td_sheet_t *s);
 td_sheet_t *td_stack_pop(td_stack_t *st);

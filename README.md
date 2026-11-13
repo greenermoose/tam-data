@@ -5,12 +5,14 @@ A terminal spreadsheet multitool written in C, inspired by
 exploration and editing with a small runtime footprint and first-class Linux
 virtual console support, without a Python runtime.
 
-**Early development: the current version, 0.3.0, implements Phase 2 (selection, search, filtering, and sorting) on top of the Phase 1 CSV/TSV MVP.**
-It opens and saves CSV/TSV files, accepts piped `stdin`, and supports grid and
-column navigation, regex search and selection, row deletion, filtered sheet
-extraction, and typed sorting. In-place cell editing, undo/redo, and analytical
-aggregations are the next milestones. The long-term ambition is VisiData's core
-workflows; full feature parity is not a current capability.
+**Early development: the current version, 0.4.0, implements Phase 3 (in-place editing, clipboard/yank ring, undo/redo, and command log/replay) on top of Phases 1–2.**
+It opens and saves CSV/TSV/`.vd` files, accepts piped `stdin`, and supports
+grid and column navigation, regex search and selection, row deletion, filtered
+sheet extraction, typed sorting, in-place cell/row/column editing and
+duplication, cross-sheet yank/paste, per-sheet undo/redo, and deterministic
+command replay (`-p` / `-b`). Analytical aggregations are the next milestone.
+The long-term ambition is VisiData's core workflows; full feature parity is not
+a current capability.
 
 ![tam-data displaying its built-in demo sheet](docs/images/demo.png)
 
@@ -26,14 +28,21 @@ name column, and the row-selection status bar. See
   distinct-value jumps (`<`/`>`), and blank-cell jumps (`{`/`}`).
 - Row selection (`s`/`u`/`t`/`gs`/`gu`/`gt`), regex selection (`|`/`\`/`g|`/`g\`),
   regex search (`/`/`?`/`g/`/`g?`/`n`/`N`), filtered sheet extraction (`"`),
-  row deletion (`d`/`gd`), and stable typed single/multi-column sorting
-  (`[`/`]`/`g[`/`g]`).
+  row deletion (`d`/`gd`, pushing deleted rows to the yank ring), and stable
+  typed single/multi-column sorting (`[`/`]`/`g[`/`g]`).
+- In-place cell/row/column editing: cell edit with prompt history (`e`/`ge`),
+  cell clearing (`zd`/`gzd`), blank row/column insertion (`a`/`ga`/`za`), and
+  in-place row/column duplication (`g"`/`z"`).
+- Cross-sheet clipboard/yank ring (`y`/`gy`/`zy`/`gzy`, `p`/`P`/`zp`) and
+  lossless per-sheet undo/redo (`U`/`R`).
+- Tabular command log (`D`), `.vd` script saving (`Ctrl+S`), and deterministic
+  CLI replay (`-p`/`--play`, `-b`/`--batch`).
 - Column hiding/unhiding (`-`/`gv`), reordering (`H`/`L`), renaming (`^`),
   autosizing/manual width (`_`/`g_`/`z_`), pinning (`!`), and type changes
   (`#`/`%`/`$`/`@`/`~`/`z~`).
-- Atomic CSV/TSV saving (`Ctrl+S`) via `tam_fs_write_atomic`.
-- Typed values, sheet-stack infrastructure, a prompt editor, and a terminal
-  renderer with Linux console and modern terminal profiles.
+- Atomic CSV/TSV/`.vd` saving (`Ctrl+S`) via `tam_fs_write_atomic`.
+- Typed values, sheet-stack infrastructure, a prompt editor with history, and a
+  terminal renderer with Linux console and modern terminal profiles.
 - Strict C11 compilation and an AddressSanitizer/UndefinedBehaviorSanitizer
   test suite.
 
@@ -108,6 +117,12 @@ The demo contains eight built-in rows; no input file is required.
 | `\|` / `\\` | Select / unselect rows matching a regex in the current column |
 | `/` / `?` / `n` / `N` | Search forward / backward / next / previous match |
 | `"` / `d` / `gd` | Duplicate selected rows / delete row / delete selected rows |
+| `e` / `ge` / `zd` / `gzd` | Edit cell / set selected cells / clear cell / clear selected |
+| `a` / `ga` / `za` | Insert blank row / N rows / append blank column |
+| `g"` / `z"` | Duplicate current row / column in-place |
+| `y` / `gy` / `zy` / `gzy` | Yank row / selected rows / cell / selected cells |
+| `p` / `P` / `zp` | Paste after / before / into cell(s) |
+| `U` / `R` / `D` | Undo / redo / open Command Log (`cmdlog`) |
 | `[` / `]` / `g[` / `g]` | Sort ascending / descending (column or pinned key columns) |
 | `!` | Pin or unpin the current column |
 | `_` / `^` / `-` | Autosize / rename / hide the current column |

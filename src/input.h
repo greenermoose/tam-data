@@ -116,6 +116,25 @@ typedef enum {
     TD_CMD_SORT_DESC,
     TD_CMD_SORT_KEYS_ASC,
     TD_CMD_SORT_KEYS_DESC,
+    TD_CMD_EDIT_CELL,
+    TD_CMD_EDIT_SELECTED,
+    TD_CMD_CLEAR_CELL,
+    TD_CMD_CLEAR_SELECTED,
+    TD_CMD_ADD_ROW,
+    TD_CMD_ADD_ROWS,
+    TD_CMD_ADD_COL,
+    TD_CMD_DUP_ROW,
+    TD_CMD_DUP_COL,
+    TD_CMD_YANK_ROW,
+    TD_CMD_YANK_SELECTED,
+    TD_CMD_YANK_CELL,
+    TD_CMD_YANK_SELECTED_CELLS,
+    TD_CMD_PASTE_AFTER,
+    TD_CMD_PASTE_BEFORE,
+    TD_CMD_PASTE_CELL,
+    TD_CMD_UNDO,
+    TD_CMD_REDO,
+    TD_CMD_SHOW_CMDLOG,
     TD_CMD_REDRAW
 } td_cmd_t;
 
@@ -147,8 +166,19 @@ typedef enum {
     TD_PROMPT_SEARCH_FWD,
     TD_PROMPT_SEARCH_BWD,
     TD_PROMPT_SEARCH_ALL_FWD,
-    TD_PROMPT_SEARCH_ALL_BWD
+    TD_PROMPT_SEARCH_ALL_BWD,
+    TD_PROMPT_EDIT_CELL,
+    TD_PROMPT_EDIT_SELECTED,
+    TD_PROMPT_ADD_ROWS,
+    TD_PROMPT_KIND_COUNT
 } td_prompt_kind_t;
+
+#define TD_PROMPT_HIST_MAX 64
+
+typedef struct {
+    char *items[TD_PROMPT_HIST_MAX];
+    size_t len;
+} td_prompt_hist_t;
 
 typedef struct {
     bool active;
@@ -158,6 +188,9 @@ typedef struct {
     size_t len;
     size_t cap;
     size_t cursor;
+    td_prompt_hist_t hist[TD_PROMPT_KIND_COUNT];
+    size_t hist_pos;
+    char *draft;
 } td_prompt_t;
 
 void td_prompt_init(td_prompt_t *p);

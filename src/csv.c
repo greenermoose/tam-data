@@ -62,7 +62,8 @@ char td_csv_detect_delimiter(const char *path, const char *buf, size_t len)
     size_t limit;
     bool in_quotes = false;
 
-    if (td_csv_has_ext(path, ".tsv") || td_csv_has_ext(path, ".tab"))
+    if (td_csv_has_ext(path, ".tsv") || td_csv_has_ext(path, ".tab") ||
+        td_csv_has_ext(path, ".vd"))
         return '\t';
     if (td_csv_has_ext(path, ".csv"))
         return ',';

@@ -352,60 +352,6 @@ td_sheet_t *td_demo_sheet(void)
     return s;
 }
 
-#ifndef TD_TAM_DATA_NO_MAIN
-
-static void td_usage(FILE *out)
-{
-    fprintf(out,
-        "usage: tam-data [options] [file ...]\n"
-        "\n"
-        "Options:\n"
-        "  -d, --delimiter CHAR  explicit field delimiter (use \\t for tab)\n"
-        "      --csv             force comma-delimited CSV\n"
-        "      --tsv             force tab-delimited TSV\n"
-        "      --no-header       treat first row as data (col1, col2, ...)\n"
-        "      --demo            open the built-in sample sheet\n"
-        "  -v, --version         print version information\n"
-        "  -h, --help            show this help\n"
-        "\n"
-        "Pass '-' or pipe data on stdin to read from standard input.\n"
-        "\n"
-        "Keybindings:\n"
-        "  h j k l / arrows      move the cursor\n"
-        "  gh gl gg G            first/last column, first/last row\n"
-        "  Ctrl+F / Ctrl+B       page down / page up\n"
-        "  < / >                 previous / next distinct value in column\n"
-        "  { / }                 previous / next blank cell in column\n"
-        "  H / L                 move column left / right\n"
-        "  s u t                 select / unselect / toggle current row\n"
-        "  gs gu gt              select / unselect / toggle all rows\n"
-        "  | \\ g| g\\             select / unselect rows by regex (col / all)\n"
-        "  / ? g/ g? n N         regex search (fwd/bwd, col/all, next/prev)\n"
-        "  \"                     duplicate selected rows into new sheet\n"
-        "  d / gd                delete current row / selected rows\n"
-        "  [ ] / g[ g]           sort asc / desc (current col / key cols)\n"
-        "  !                     pin or unpin the current column as a key\n"
-        "  - / gv                hide current column / unhide all columns\n"
-        "  _ / g_ / z_           autosize column / all columns / set width\n"
-        "  ^                     rename the current column\n"
-        "  # %% $ @ ~ z~          set column type (int, float, currency,\n"
-        "                        date, string, any)\n"
-        "  Ctrl+S                save sheet atomically to CSV/TSV\n"
-        "  q / gq                pop sheet / quit tam-data\n"
-        "  Ctrl+L                full redraw\n");
-}
-
-static const char *td_locale(void)
-{
-    const char *s = getenv("LC_ALL");
-
-    if (!s || !*s)
-        s = getenv("LC_CTYPE");
-    if (!s || !*s)
-        s = getenv("LANG");
-    return s;
-}
-
 static void td_set_message(char *buf, size_t cap, const char *fmt, ...)
 {
     va_list ap;
@@ -417,22 +363,68 @@ static void td_set_message(char *buf, size_t cap, const char *fmt, ...)
     va_end(ap);
 }
 
-static void td_handle_command(td_cmd_t cmd, td_stack_t *stack, td_term_t *term,
-                              td_prompt_t *prompt, char *msg, size_t msg_cap,
-                              bool *quit)
+static bool td_parse_int_range(const char *text, long min_v, long max_v,
+                               long *out)
 {
-    td_sheet_t *s = td_stack_active(stack);
-    int body_rows = term->rows - 2;
-    size_t next;
+    char *end = NULL;
+    long v;
 
-    if (body_rows < 1)
-        body_rows = 1;
+    if (!text || !text[0])
+        return false;
+    errno = 0;
+    v = strtol(text, &end, 10);
+    if (errno == ERANGE || end == text)
+        return false;
+    while (*end == ' ' || *end == '\t')
+        end++;
+    if (*end != '\0' || v < min_v || v > max_v)
+        return false;
+    *out = v;
+    return true;
+}
+
+static bool td_exec_fail(td_exec_ctx_t *ctx, char *err, size_t err_cap,
+                         const char *fmt, ...)
+{
+    char buf[256];
+    va_list ap;
+
+    va_start(ap, fmt);
+    vsnprintf(buf, sizeof(buf), fmt, ap);
+    va_end(ap);
+    if (err && err_cap > 0)
+        snprintf(err, err_cap, "%s", buf);
+    if (ctx && ctx->msg && ctx->msg_cap > 0)
+        snprintf(ctx->msg, ctx->msg_cap, "%s", buf);
+    return false;
+}
+
+bool td_exec_action(td_cmd_t cmd, const char *input_arg, td_exec_ctx_t *ctx,
+                    char *err, size_t err_cap)
+{
+    td_sheet_t *s;
+    size_t orig_row;
+    size_t orig_col;
+    int body_rows;
+    size_t next;
+    bool ok = true;
+
+    if (err && err_cap > 0)
+        err[0] = '\0';
+    if (!ctx || !ctx->stack)
+        return td_exec_fail(ctx, err, err_cap, "missing execution context");
+
+    s = td_stack_active(ctx->stack);
     if (!s)
-        return;
+        return td_exec_fail(ctx, err, err_cap, "no active sheet");
+
+    orig_row = s->cursor_row;
+    orig_col = s->cursor_col;
+    body_rows = (ctx->term && ctx->term->rows > 2) ? (ctx->term->rows - 2) : 22;
 
     switch (cmd) {
     case TD_CMD_NONE:
-        break;
+        return true;
     case TD_CMD_LEFT:
         next = td_sheet_next_visible_col(s, s->cursor_col, -1);
         if (next != SIZE_MAX)
@@ -481,129 +473,143 @@ static void td_handle_command(td_cmd_t cmd, td_stack_t *stack, td_term_t *term,
         break;
     case TD_CMD_NEXT_VALUE:
         if (!td_sheet_jump_value(s, 1))
-            td_set_message(msg, msg_cap, "no different value below");
+            td_set_message(ctx->msg, ctx->msg_cap, "no different value below");
         break;
     case TD_CMD_PREV_VALUE:
         if (!td_sheet_jump_value(s, -1))
-            td_set_message(msg, msg_cap, "no different value above");
+            td_set_message(ctx->msg, ctx->msg_cap, "no different value above");
         break;
     case TD_CMD_NEXT_NULL:
         if (!td_sheet_jump_null(s, 1))
-            td_set_message(msg, msg_cap, "no blank cell below");
+            td_set_message(ctx->msg, ctx->msg_cap, "no blank cell below");
         break;
     case TD_CMD_PREV_NULL:
         if (!td_sheet_jump_null(s, -1))
-            td_set_message(msg, msg_cap, "no blank cell above");
+            td_set_message(ctx->msg, ctx->msg_cap, "no blank cell above");
         break;
     case TD_CMD_MOVE_COL_LEFT:
         if (!td_sheet_move_col(s, s->cursor_col, -1))
-            td_set_message(msg, msg_cap, "already at leftmost column");
+            td_set_message(ctx->msg, ctx->msg_cap, "already at leftmost column");
         break;
     case TD_CMD_MOVE_COL_RIGHT:
         if (!td_sheet_move_col(s, s->cursor_col, 1))
-            td_set_message(msg, msg_cap, "already at rightmost column");
+            td_set_message(ctx->msg, ctx->msg_cap,
+                           "already at rightmost column");
         break;
     case TD_CMD_HIDE_COL:
         if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
+            return td_exec_fail(ctx, err, err_cap, "no column to hide");
         td_sheet_hide_col(s, s->cursor_col);
-        td_set_message(msg, msg_cap, "column hidden");
+        td_set_message(ctx->msg, ctx->msg_cap, "column hidden");
         break;
     case TD_CMD_TOGGLE_KEY_COL:
         if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
+            return td_exec_fail(ctx, err, err_cap, "no column");
         td_sheet_toggle_key_col(s, s->cursor_col);
-        td_set_message(msg, msg_cap, "%s key column",
+        td_set_message(ctx->msg, ctx->msg_cap, "%s key column",
                        s->cols[s->cursor_col].is_key ? "pinned" : "unpinned");
         break;
     case TD_CMD_AUTOSIZE_COL:
         if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
+            return td_exec_fail(ctx, err, err_cap, "no column");
         td_sheet_autosize_col(s, s->cursor_col);
-        td_set_message(msg, msg_cap, "column width %d",
+        td_set_message(ctx->msg, ctx->msg_cap, "column width %d",
                        td_sheet_col_width(s, s->cursor_col));
         break;
     case TD_CMD_AUTOSIZE_ALL_COLS:
         td_sheet_autosize_all_cols(s);
-        td_set_message(msg, msg_cap, "autosized all columns");
+        td_set_message(ctx->msg, ctx->msg_cap, "autosized all columns");
         break;
     case TD_CMD_SET_COL_WIDTH: {
-        char wbuf[32];
+        long width = 0;
 
         if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
-        snprintf(wbuf, sizeof(wbuf), "%d",
-                 td_sheet_col_width(s, s->cursor_col));
-        td_prompt_start_kind(prompt, TD_PROMPT_COL_WIDTH, "column width:",
-                             wbuf);
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        if (!td_parse_int_range(input_arg, 0, 1000, &width))
+            return td_exec_fail(ctx, err, err_cap, "invalid width: %s",
+                                input_arg ? input_arg : "");
+        if (td_sheet_set_col_width(s, s->cursor_col, (int)width)) {
+            if (width == 0)
+                td_set_message(ctx->msg, ctx->msg_cap, "column hidden");
+            else
+                td_set_message(ctx->msg, ctx->msg_cap, "column width %ld",
+                               width);
+        }
         break;
     }
     case TD_CMD_UNHIDE_ALL_COLS:
         td_sheet_unhide_all_cols(s);
-        td_set_message(msg, msg_cap, "unhid all columns");
+        td_set_message(ctx->msg, ctx->msg_cap, "unhid all columns");
         break;
     case TD_CMD_RENAME_COL:
         if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
-        td_prompt_start_kind(prompt, TD_PROMPT_RENAME_COL, "rename column:",
-                             s->cols[s->cursor_col].name);
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        if (!td_sheet_rename_col(s, s->cursor_col, input_arg ? input_arg : ""))
+            return td_exec_fail(ctx, err, err_cap, "rename failed");
+        td_set_message(ctx->msg, ctx->msg_cap, "renamed column to %s",
+                       input_arg ? input_arg : "");
         break;
     case TD_CMD_SAVE_SHEET: {
-        const char *def = (s->source_path && s->source_path[0] &&
-                           strcmp(s->source_path, "(built-in)") != 0)
-                              ? s->source_path
-                              : "output.csv";
+        char serr[256];
 
-        td_prompt_start_kind(prompt, TD_PROMPT_SAVE_SHEET, "save to:", def);
+        if (!input_arg || !input_arg[0])
+            return td_exec_fail(ctx, err, err_cap,
+                                "save cancelled: empty path");
+        if (!td_csv_save_sheet(s, input_arg, '\0', serr, sizeof(serr)))
+            return td_exec_fail(ctx, err, err_cap, "save failed: %s", serr);
+        td_set_message(ctx->msg, ctx->msg_cap, "saved %zu rows to %s",
+                       s->nrows, input_arg);
         break;
     }
     case TD_CMD_TYPE_ANY:
-        if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
-        td_sheet_set_col_type(s, s->cursor_col, TD_TYPE_ANY);
-        td_set_message(msg, msg_cap, "column type any");
-        break;
     case TD_CMD_TYPE_STR:
-        if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
-        td_sheet_set_col_type(s, s->cursor_col, TD_TYPE_STR);
-        td_set_message(msg, msg_cap, "column type string");
-        break;
     case TD_CMD_TYPE_INT:
-        if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
-        td_sheet_set_col_type(s, s->cursor_col, TD_TYPE_INT);
-        td_set_message(msg, msg_cap, "column type int");
-        break;
     case TD_CMD_TYPE_FLOAT:
-        if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
-        td_sheet_set_col_type(s, s->cursor_col, TD_TYPE_FLOAT);
-        td_set_message(msg, msg_cap, "column type float");
-        break;
     case TD_CMD_TYPE_CURRENCY:
+    case TD_CMD_TYPE_DATE: {
+        td_type_t t = TD_TYPE_ANY;
+        const char *label = "any";
+
         if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
-        td_sheet_set_col_type(s, s->cursor_col, TD_TYPE_CURRENCY);
-        td_set_message(msg, msg_cap, "column type currency");
-        break;
-    case TD_CMD_TYPE_DATE:
-        if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
-        td_sheet_set_col_type(s, s->cursor_col, TD_TYPE_DATE);
-        td_set_message(msg, msg_cap, "column type date");
-        break;
-    case TD_CMD_POP_SHEET:
-        s = td_stack_pop(stack);
-        td_sheet_free(s);
-        if (stack->len == 0) {
-            *quit = true;
-        } else {
-            td_set_message(msg, msg_cap, "sheet closed");
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        if (cmd == TD_CMD_TYPE_STR) {
+            t = TD_TYPE_STR;
+            label = "string";
+        } else if (cmd == TD_CMD_TYPE_INT) {
+            t = TD_TYPE_INT;
+            label = "int";
+        } else if (cmd == TD_CMD_TYPE_FLOAT) {
+            t = TD_TYPE_FLOAT;
+            label = "float";
+        } else if (cmd == TD_CMD_TYPE_CURRENCY) {
+            t = TD_TYPE_CURRENCY;
+            label = "currency";
+        } else if (cmd == TD_CMD_TYPE_DATE) {
+            t = TD_TYPE_DATE;
+            label = "date";
         }
+        td_sheet_set_col_type(s, s->cursor_col, t);
+        td_set_message(ctx->msg, ctx->msg_cap, "column type %s", label);
         break;
+    }
+    case TD_CMD_POP_SHEET: {
+        td_sheet_t *popped;
+
+        (void)td_cmdlog_record(ctx->cmdlog, s, orig_row, orig_col, cmd,
+                               input_arg, NULL);
+        popped = td_stack_pop(ctx->stack);
+        td_sheet_free(popped);
+        if (ctx->stack->len == 0) {
+            if (ctx->quit)
+                *ctx->quit = true;
+        } else {
+            td_set_message(ctx->msg, ctx->msg_cap, "sheet closed");
+        }
+        return true;
+    }
     case TD_CMD_QUIT_ALL:
-        *quit = true;
+        if (ctx->quit)
+            *ctx->quit = true;
         break;
     case TD_CMD_SELECT_ROW:
         if (s->nrows > 0 && s->cursor_row < s->nrows)
@@ -627,74 +633,83 @@ static void td_handle_command(td_cmd_t cmd, td_stack_t *stack, td_term_t *term,
         td_sheet_toggle_all(s);
         break;
     case TD_CMD_SELECT_REGEX:
-        td_prompt_start_kind(prompt, TD_PROMPT_SELECT_REGEX,
-                             "select regex:", "");
-        break;
     case TD_CMD_UNSELECT_REGEX:
-        td_prompt_start_kind(prompt, TD_PROMPT_UNSELECT_REGEX,
-                             "unselect regex:", "");
-        break;
     case TD_CMD_SELECT_ALL_REGEX:
-        td_prompt_start_kind(prompt, TD_PROMPT_SELECT_ALL_REGEX,
-                             "select all regex:", "");
+    case TD_CMD_UNSELECT_ALL_REGEX: {
+        bool all_cols = cmd == TD_CMD_SELECT_ALL_REGEX ||
+                        cmd == TD_CMD_UNSELECT_ALL_REGEX;
+        bool select = cmd == TD_CMD_SELECT_REGEX ||
+                      cmd == TD_CMD_SELECT_ALL_REGEX;
+        size_t matched = 0;
+        char rerr[256];
+
+        if (!input_arg || !input_arg[0])
+            return td_exec_fail(ctx, err, err_cap, "empty regex");
+        if (!td_sheet_select_regex(s, input_arg, all_cols, select, &matched,
+                                   rerr, sizeof(rerr)))
+            return td_exec_fail(ctx, err, err_cap, "invalid regex: %s", rerr);
+        td_set_message(ctx->msg, ctx->msg_cap, "%s %zu %s",
+                       select ? "selected" : "unselected", matched,
+                       matched == 1 ? "row" : "rows");
         break;
-    case TD_CMD_UNSELECT_ALL_REGEX:
-        td_prompt_start_kind(prompt, TD_PROMPT_UNSELECT_ALL_REGEX,
-                             "unselect all regex:", "");
-        break;
+    }
     case TD_CMD_SEARCH_FWD:
-        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_FWD, "/", "");
-        break;
     case TD_CMD_SEARCH_BWD:
-        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_BWD, "?", "");
-        break;
     case TD_CMD_SEARCH_ALL_FWD:
-        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_ALL_FWD, "g/", "");
+    case TD_CMD_SEARCH_ALL_BWD: {
+        int dir = (cmd == TD_CMD_SEARCH_FWD || cmd == TD_CMD_SEARCH_ALL_FWD)
+                      ? 1
+                      : -1;
+        bool all_cols = cmd == TD_CMD_SEARCH_ALL_FWD ||
+                        cmd == TD_CMD_SEARCH_ALL_BWD;
+        char serr[256];
+
+        if (!td_sheet_search(s, input_arg, dir, all_cols, serr, sizeof(serr)))
+            return td_exec_fail(ctx, err, err_cap, "%s", serr);
         break;
-    case TD_CMD_SEARCH_ALL_BWD:
-        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_ALL_BWD, "g?", "");
-        break;
+    }
     case TD_CMD_SEARCH_NEXT:
     case TD_CMD_SEARCH_PREV: {
-        char err[256];
+        char serr[256];
         int dir_mult = cmd == TD_CMD_SEARCH_NEXT ? 1 : -1;
 
-        if (!td_sheet_search_next(s, dir_mult, err, sizeof(err)))
-            td_set_message(msg, msg_cap, "%s", err);
+        if (!td_sheet_search_next(s, dir_mult, serr, sizeof(serr)))
+            return td_exec_fail(ctx, err, err_cap, "%s", serr);
         break;
     }
     case TD_CMD_DUP_SELECTED: {
-        if (s->nselected == 0) {
-            td_set_message(msg, msg_cap, "no rows selected");
-            break;
-        }
-        td_sheet_t *dup = td_sheet_dup_selected(s, "[selected]");
+        td_sheet_t *dup;
 
-        if (!dup || !td_stack_push(stack, dup)) {
+        if (s->nselected == 0)
+            return td_exec_fail(ctx, err, err_cap, "no rows selected");
+        dup = td_sheet_dup_selected(s, "[selected]");
+        if (!dup || !td_stack_push(ctx->stack, dup)) {
             td_sheet_free(dup);
-            td_set_message(msg, msg_cap, "duplicate failed: out of memory");
-        } else {
-            td_set_message(msg, msg_cap, "pushed %zu selected %s",
-                           dup->nrows, dup->nrows == 1 ? "row" : "rows");
+            return td_exec_fail(ctx, err, err_cap,
+                                "duplicate failed: out of memory");
         }
+        td_set_message(ctx->msg, ctx->msg_cap, "pushed %zu selected %s",
+                       dup->nrows, dup->nrows == 1 ? "row" : "rows");
         break;
     }
     case TD_CMD_DELETE_ROW:
-        if (s->nrows == 0 || s->cursor_row >= s->nrows) {
-            td_set_message(msg, msg_cap, "no rows to delete");
-        } else if (td_sheet_delete_row(s, s->cursor_row)) {
-            td_set_message(msg, msg_cap, "deleted 1 row");
-        }
+        if (s->nrows == 0 || s->cursor_row >= s->nrows)
+            return td_exec_fail(ctx, err, err_cap, "no rows to delete");
+        if (ctx->clip)
+            (void)td_clipboard_yank_row(ctx->clip, s, s->cursor_row);
+        if (td_sheet_delete_row(s, s->cursor_row))
+            td_set_message(ctx->msg, ctx->msg_cap, "deleted 1 row");
         break;
     case TD_CMD_DELETE_SELECTED: {
-        if (s->nselected == 0) {
-            td_set_message(msg, msg_cap, "no rows selected");
-        } else {
-            size_t n = td_sheet_delete_selected(s);
+        size_t n;
 
-            td_set_message(msg, msg_cap, "deleted %zu selected %s", n,
-                           n == 1 ? "row" : "rows");
-        }
+        if (s->nselected == 0)
+            return td_exec_fail(ctx, err, err_cap, "no rows selected");
+        if (ctx->clip)
+            (void)td_clipboard_yank_selected(ctx->clip, s);
+        n = td_sheet_delete_selected(s);
+        td_set_message(ctx->msg, ctx->msg_cap, "deleted %zu selected %s", n,
+                       n == 1 ? "row" : "rows");
         break;
     }
     case TD_CMD_SORT_ASC:
@@ -702,12 +717,13 @@ static void td_handle_command(td_cmd_t cmd, td_stack_t *stack, td_term_t *term,
         bool desc = cmd == TD_CMD_SORT_DESC;
 
         if (s->ncols == 0 || s->cursor_col >= s->ncols)
-            break;
+            return td_exec_fail(ctx, err, err_cap, "no column");
         if (td_sheet_sort_col(s, s->cursor_col, desc)) {
             const char *cname = s->cols[s->cursor_col].name
                                     ? s->cols[s->cursor_col].name
                                     : "";
-            td_set_message(msg, msg_cap, "sorted %s by %s",
+
+            td_set_message(ctx->msg, ctx->msg_cap, "sorted %s by %s",
                            desc ? "descending" : "ascending", cname);
         }
         break;
@@ -718,7 +734,7 @@ static void td_handle_command(td_cmd_t cmd, td_stack_t *stack, td_term_t *term,
         bool has_keys = false;
 
         if (s->ncols == 0)
-            break;
+            return td_exec_fail(ctx, err, err_cap, "no column");
         for (size_t c = 0; c < s->ncols; c++) {
             if (s->cols[c].is_key && s->cols[c].width != 0) {
                 has_keys = true;
@@ -727,22 +743,271 @@ static void td_handle_command(td_cmd_t cmd, td_stack_t *stack, td_term_t *term,
         }
         if (td_sheet_sort_keys(s, desc)) {
             if (has_keys) {
-                td_set_message(msg, msg_cap, "sorted %s by key columns",
+                td_set_message(ctx->msg, ctx->msg_cap,
+                               "sorted %s by key columns",
                                desc ? "descending" : "ascending");
             } else {
                 const char *cname = s->cols[s->cursor_col].name
                                         ? s->cols[s->cursor_col].name
                                         : "";
-                td_set_message(msg, msg_cap, "sorted %s by %s",
+
+                td_set_message(ctx->msg, ctx->msg_cap, "sorted %s by %s",
                                desc ? "descending" : "ascending", cname);
             }
         }
         break;
     }
-    case TD_CMD_REDRAW:
-        term->force_full = true;
+    case TD_CMD_EDIT_CELL:
+        if (s->nrows == 0 || s->ncols == 0 ||
+            s->cursor_row >= s->nrows || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no cell to edit");
+        if (!td_sheet_edit_cell(s, s->cursor_row, s->cursor_col,
+                                input_arg ? input_arg : ""))
+            return td_exec_fail(ctx, err, err_cap, "edit failed");
+        break;
+    case TD_CMD_EDIT_SELECTED: {
+        size_t n;
+
+        if (s->nselected == 0)
+            return td_exec_fail(ctx, err, err_cap, "no rows selected");
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        n = td_sheet_edit_selected(s, s->cursor_col,
+                                   input_arg ? input_arg : "");
+        td_set_message(ctx->msg, ctx->msg_cap, "updated %zu selected %s", n,
+                       n == 1 ? "row" : "rows");
         break;
     }
+    case TD_CMD_CLEAR_CELL:
+        if (s->nrows == 0 || s->ncols == 0 ||
+            s->cursor_row >= s->nrows || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no cell to clear");
+        if (td_sheet_clear_cell(s, s->cursor_row, s->cursor_col))
+            td_set_message(ctx->msg, ctx->msg_cap, "cleared cell");
+        break;
+    case TD_CMD_CLEAR_SELECTED: {
+        size_t n;
+
+        if (s->nselected == 0)
+            return td_exec_fail(ctx, err, err_cap, "no rows selected");
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        n = td_sheet_clear_selected(s, s->cursor_col);
+        td_set_message(ctx->msg, ctx->msg_cap, "cleared %zu selected %s", n,
+                       n == 1 ? "cell" : "cells");
+        break;
+    }
+    case TD_CMD_ADD_ROW: {
+        size_t vis_pos = s->nrows == 0 ? 0 : (s->cursor_row + 1);
+
+        if (!td_sheet_insert_rows(s, vis_pos, 1))
+            return td_exec_fail(ctx, err, err_cap, "add row failed");
+        td_set_message(ctx->msg, ctx->msg_cap, "added 1 row");
+        break;
+    }
+    case TD_CMD_ADD_ROWS: {
+        long count = 0;
+        size_t vis_pos = s->nrows == 0 ? 0 : (s->cursor_row + 1);
+
+        if (!td_parse_int_range(input_arg, 1, 100000, &count))
+            return td_exec_fail(ctx, err, err_cap, "invalid row count: %s",
+                                input_arg ? input_arg : "");
+        if (!td_sheet_insert_rows(s, vis_pos, (size_t)count))
+            return td_exec_fail(ctx, err, err_cap, "add rows failed");
+        td_set_message(ctx->msg, ctx->msg_cap, "added %ld %s", count,
+                       count == 1 ? "row" : "rows");
+        break;
+    }
+    case TD_CMD_ADD_COL: {
+        size_t idx = td_sheet_append_blank_col(s);
+
+        if (idx == SIZE_MAX)
+            return td_exec_fail(ctx, err, err_cap, "add column failed");
+        td_set_message(ctx->msg, ctx->msg_cap, "added column %s",
+                       s->cols[idx].name);
+        break;
+    }
+    case TD_CMD_DUP_ROW:
+        if (s->nrows == 0 || s->cursor_row >= s->nrows)
+            return td_exec_fail(ctx, err, err_cap, "no row to duplicate");
+        if (!td_sheet_dup_row(s, s->cursor_row))
+            return td_exec_fail(ctx, err, err_cap, "duplicate row failed");
+        td_set_message(ctx->msg, ctx->msg_cap, "duplicated row");
+        break;
+    case TD_CMD_DUP_COL:
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column to duplicate");
+        if (!td_sheet_dup_col(s, s->cursor_col))
+            return td_exec_fail(ctx, err, err_cap, "duplicate column failed");
+        td_set_message(ctx->msg, ctx->msg_cap, "duplicated column");
+        break;
+    case TD_CMD_YANK_ROW:
+        if (s->nrows == 0 || s->cursor_row >= s->nrows)
+            return td_exec_fail(ctx, err, err_cap, "no row to yank");
+        if (!ctx->clip ||
+            !td_clipboard_yank_row(ctx->clip, s, s->cursor_row))
+            return td_exec_fail(ctx, err, err_cap, "yank failed");
+        td_set_message(ctx->msg, ctx->msg_cap, "yanked 1 row");
+        break;
+    case TD_CMD_YANK_SELECTED: {
+        size_t n;
+
+        if (s->nselected == 0)
+            return td_exec_fail(ctx, err, err_cap, "no rows selected");
+        n = ctx->clip ? td_clipboard_yank_selected(ctx->clip, s) : 0;
+        if (n == 0)
+            return td_exec_fail(ctx, err, err_cap, "yank failed");
+        td_set_message(ctx->msg, ctx->msg_cap, "yanked %zu selected %s", n,
+                       n == 1 ? "row" : "rows");
+        break;
+    }
+    case TD_CMD_YANK_CELL:
+        if (s->nrows == 0 || s->ncols == 0 ||
+            s->cursor_row >= s->nrows || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no cell to yank");
+        if (!ctx->clip ||
+            !td_clipboard_yank_cell(ctx->clip, s, s->cursor_row, s->cursor_col))
+            return td_exec_fail(ctx, err, err_cap, "yank failed");
+        td_set_message(ctx->msg, ctx->msg_cap, "yanked cell");
+        break;
+    case TD_CMD_YANK_SELECTED_CELLS: {
+        size_t n;
+
+        if (s->nselected == 0)
+            return td_exec_fail(ctx, err, err_cap, "no rows selected");
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return td_exec_fail(ctx, err, err_cap, "no column");
+        n = ctx->clip ? td_clipboard_yank_selected_cells(ctx->clip, s,
+                                                         s->cursor_col)
+                      : 0;
+        if (n == 0)
+            return td_exec_fail(ctx, err, err_cap, "yank failed");
+        td_set_message(ctx->msg, ctx->msg_cap, "yanked %zu %s", n,
+                       n == 1 ? "cell" : "cells");
+        break;
+    }
+    case TD_CMD_PASTE_AFTER:
+    case TD_CMD_PASTE_BEFORE:
+    case TD_CMD_PASTE_CELL: {
+        bool after = cmd != TD_CMD_PASTE_BEFORE;
+        bool force_cell = cmd == TD_CMD_PASTE_CELL;
+        size_t pasted = 0;
+        char perr[256];
+
+        if (!td_sheet_paste(s, ctx->clip, after, force_cell, &pasted,
+                            perr, sizeof(perr)))
+            return td_exec_fail(ctx, err, err_cap, "%s", perr);
+        td_set_message(ctx->msg, ctx->msg_cap, "pasted %zu %s", pasted,
+                       pasted == 1 ? "item" : "items");
+        break;
+    }
+    case TD_CMD_UNDO: {
+        char desc[64];
+
+        if (!td_sheet_undo(s, desc, sizeof(desc)))
+            return td_exec_fail(ctx, err, err_cap, "nothing to undo");
+        td_set_message(ctx->msg, ctx->msg_cap, "undid: %s", desc);
+        break;
+    }
+    case TD_CMD_REDO: {
+        char desc[64];
+
+        if (!td_sheet_redo(s, desc, sizeof(desc)))
+            return td_exec_fail(ctx, err, err_cap, "nothing to redo");
+        td_set_message(ctx->msg, ctx->msg_cap, "redid: %s", desc);
+        break;
+    }
+    case TD_CMD_SHOW_CMDLOG: {
+        td_sheet_t *cl = td_cmdlog_to_sheet(ctx->cmdlog);
+
+        if (!cl)
+            return td_exec_fail(ctx, err, err_cap,
+                                "cmdlog failed: out of memory");
+        if (s->name && strcmp(s->name, "cmdlog") == 0)
+            td_sheet_free(td_stack_pop(ctx->stack));
+        if (!td_stack_push(ctx->stack, cl)) {
+            td_sheet_free(cl);
+            return td_exec_fail(ctx, err, err_cap,
+                                "cmdlog failed: out of memory");
+        }
+        td_set_message(ctx->msg, ctx->msg_cap, "command log (%zu %s)",
+                       cl->nrows, cl->nrows == 1 ? "entry" : "entries");
+        return true;
+    }
+    case TD_CMD_REDRAW:
+        if (ctx->term)
+            ctx->term->force_full = true;
+        return true;
+    }
+
+    if (ok && ctx->cmdlog)
+        (void)td_cmdlog_record(ctx->cmdlog, s, orig_row, orig_col, cmd,
+                               input_arg, NULL);
+    return ok;
+}
+
+#ifndef TD_TAM_DATA_NO_MAIN
+
+static void td_usage(FILE *out)
+{
+    fprintf(out,
+        "usage: tam-data [options] [file ...]\n"
+        "\n"
+        "Options:\n"
+        "  -d, --delimiter CHAR  explicit field delimiter (use \\t for tab)\n"
+        "      --csv             force comma-delimited CSV\n"
+        "      --tsv             force tab-delimited TSV\n"
+        "      --no-header       treat first row as data (col1, col2, ...)\n"
+        "  -p, --play FILE       replay commands from a .vd / .tsv script\n"
+        "  -b, --batch           exit after -p replay without opening the TUI\n"
+        "      --demo            open the built-in sample sheet\n"
+        "  -v, --version         print version information\n"
+        "  -h, --help            show this help\n"
+        "\n"
+        "Pass '-' or pipe data on stdin to read from standard input.\n"
+        "\n"
+        "Keybindings:\n"
+        "  h j k l / arrows      move the cursor\n"
+        "  gh gl gg G            first/last column, first/last row\n"
+        "  Ctrl+F / Ctrl+B       page down / page up\n"
+        "  < / >                 previous / next distinct value in column\n"
+        "  { / }                 previous / next blank cell in column\n"
+        "  H / L                 move column left / right\n"
+        "  s u t                 select / unselect / toggle current row\n"
+        "  gs gu gt              select / unselect / toggle all rows\n"
+        "  | \\ g| g\\             select / unselect rows by regex (col / all)\n"
+        "  / ? g/ g? n N         regex search (fwd/bwd, col/all, next/prev)\n"
+        "  \"                     duplicate selected rows into new sheet\n"
+        "  e / ge                edit cell / set selected cells in column\n"
+        "  zd / gzd              clear cell / clear selected cells\n"
+        "  a / ga / za           add blank row / N rows / blank column\n"
+        "  g\" / z\"               duplicate current row / column in-place\n"
+        "  d / gd                delete current row / selected rows (yanks)\n"
+        "  y / gy / zy / gzy     yank row / selected rows / cell / selected cells\n"
+        "  p / P / zp            paste after / before / into cell(s)\n"
+        "  U / R                 undo / redo last action on active sheet\n"
+        "  D                     open Command Log sheet (cmdlog)\n"
+        "  [ ] / g[ g]           sort asc / desc (current col / key cols)\n"
+        "  !                     pin or unpin the current column as a key\n"
+        "  - / gv                hide current column / unhide all columns\n"
+        "  _ / g_ / z_           autosize column / all columns / set width\n"
+        "  ^                     rename the current column\n"
+        "  # %% $ @ ~ z~          set column type (int, float, currency,\n"
+        "                        date, string, any)\n"
+        "  Ctrl+S                save sheet atomically to CSV/TSV/.vd\n"
+        "  q / gq                pop sheet / quit tam-data\n"
+        "  Ctrl+L                full redraw\n");
+}
+
+static const char *td_locale(void)
+{
+    const char *s = getenv("LC_ALL");
+
+    if (!s || !*s)
+        s = getenv("LC_CTYPE");
+    if (!s || !*s)
+        s = getenv("LANG");
+    return s;
 }
 
 static bool td_parse_delimiter_arg(const char *arg, char *out)
@@ -760,109 +1025,161 @@ static bool td_parse_delimiter_arg(const char *arg, char *out)
     return false;
 }
 
-static bool td_parse_width_text(const char *text, int *out)
+static void td_start_edit_cell_prompt(td_prompt_t *prompt, const td_sheet_t *s)
 {
-    char *end = NULL;
-    long v;
+    char stack_buf[512];
+    td_val_t v;
+    td_type_t type;
+    size_t n;
 
-    if (!text || !text[0])
-        return false;
-    errno = 0;
-    v = strtol(text, &end, 10);
-    if (errno == ERANGE || end == text)
-        return false;
-    while (*end == ' ' || *end == '\t')
-        end++;
-    if (*end != '\0' || v < 0 || v > 1000)
-        return false;
-    *out = (int)v;
-    return true;
+    if (!s || s->nrows == 0 || s->ncols == 0 ||
+        s->cursor_row >= s->nrows || s->cursor_col >= s->ncols)
+        return;
+
+    v = td_sheet_get_cell(s, s->row_order[s->cursor_row], s->cursor_col);
+    type = s->cols[s->cursor_col].type;
+    n = td_val_format(v, type, stack_buf, sizeof(stack_buf));
+    if (n < sizeof(stack_buf)) {
+        td_prompt_start_kind(prompt, TD_PROMPT_EDIT_CELL, "edit cell:",
+                             stack_buf);
+        return;
+    }
+
+    char *dyn = malloc(n + 1);
+
+    if (!dyn) {
+        td_prompt_start_kind(prompt, TD_PROMPT_EDIT_CELL, "edit cell:", "");
+        return;
+    }
+    (void)td_val_format(v, type, dyn, n + 1);
+    td_prompt_start_kind(prompt, TD_PROMPT_EDIT_CELL, "edit cell:", dyn);
+    free(dyn);
+}
+
+static void td_handle_command(td_cmd_t cmd, td_exec_ctx_t *ctx,
+                              td_prompt_t *prompt)
+{
+    td_sheet_t *s = td_stack_active(ctx->stack);
+
+    if (!s)
+        return;
+
+    switch (cmd) {
+    case TD_CMD_NONE:
+        return;
+    case TD_CMD_SET_COL_WIDTH: {
+        char wbuf[32];
+
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return;
+        snprintf(wbuf, sizeof(wbuf), "%d",
+                 td_sheet_col_width(s, s->cursor_col));
+        td_prompt_start_kind(prompt, TD_PROMPT_COL_WIDTH, "column width:",
+                             wbuf);
+        return;
+    }
+    case TD_CMD_RENAME_COL:
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return;
+        td_prompt_start_kind(prompt, TD_PROMPT_RENAME_COL, "rename column:",
+                             s->cols[s->cursor_col].name);
+        return;
+    case TD_CMD_SAVE_SHEET: {
+        const char *def = (s->source_path && s->source_path[0] &&
+                           strcmp(s->source_path, "(built-in)") != 0)
+                              ? s->source_path
+                              : "output.csv";
+
+        td_prompt_start_kind(prompt, TD_PROMPT_SAVE_SHEET, "save to:", def);
+        return;
+    }
+    case TD_CMD_SELECT_REGEX:
+        td_prompt_start_kind(prompt, TD_PROMPT_SELECT_REGEX,
+                             "select regex:", "");
+        return;
+    case TD_CMD_UNSELECT_REGEX:
+        td_prompt_start_kind(prompt, TD_PROMPT_UNSELECT_REGEX,
+                             "unselect regex:", "");
+        return;
+    case TD_CMD_SELECT_ALL_REGEX:
+        td_prompt_start_kind(prompt, TD_PROMPT_SELECT_ALL_REGEX,
+                             "select all regex:", "");
+        return;
+    case TD_CMD_UNSELECT_ALL_REGEX:
+        td_prompt_start_kind(prompt, TD_PROMPT_UNSELECT_ALL_REGEX,
+                             "unselect all regex:", "");
+        return;
+    case TD_CMD_SEARCH_FWD:
+        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_FWD, "/", "");
+        return;
+    case TD_CMD_SEARCH_BWD:
+        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_BWD, "?", "");
+        return;
+    case TD_CMD_SEARCH_ALL_FWD:
+        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_ALL_FWD, "g/", "");
+        return;
+    case TD_CMD_SEARCH_ALL_BWD:
+        td_prompt_start_kind(prompt, TD_PROMPT_SEARCH_ALL_BWD, "g?", "");
+        return;
+    case TD_CMD_EDIT_CELL:
+        if (s->nrows == 0 || s->ncols == 0 ||
+            s->cursor_row >= s->nrows || s->cursor_col >= s->ncols) {
+            td_set_message(ctx->msg, ctx->msg_cap, "no cell to edit");
+            return;
+        }
+        td_start_edit_cell_prompt(prompt, s);
+        return;
+    case TD_CMD_EDIT_SELECTED:
+        if (s->nselected == 0) {
+            td_set_message(ctx->msg, ctx->msg_cap, "no rows selected");
+            return;
+        }
+        if (s->ncols == 0 || s->cursor_col >= s->ncols)
+            return;
+        td_prompt_start_kind(prompt, TD_PROMPT_EDIT_SELECTED,
+                             "set selected to:", "");
+        return;
+    case TD_CMD_ADD_ROWS:
+        td_prompt_start_kind(prompt, TD_PROMPT_ADD_ROWS, "add rows:", "1");
+        return;
+    default:
+        (void)td_exec_action(cmd, NULL, ctx, NULL, 0);
+        return;
+    }
+}
+
+static td_cmd_t td_prompt_to_cmd(td_prompt_kind_t kind)
+{
+    switch (kind) {
+    case TD_PROMPT_RENAME_COL:         return TD_CMD_RENAME_COL;
+    case TD_PROMPT_COL_WIDTH:          return TD_CMD_SET_COL_WIDTH;
+    case TD_PROMPT_SAVE_SHEET:         return TD_CMD_SAVE_SHEET;
+    case TD_PROMPT_SELECT_REGEX:       return TD_CMD_SELECT_REGEX;
+    case TD_PROMPT_UNSELECT_REGEX:     return TD_CMD_UNSELECT_REGEX;
+    case TD_PROMPT_SELECT_ALL_REGEX:   return TD_CMD_SELECT_ALL_REGEX;
+    case TD_PROMPT_UNSELECT_ALL_REGEX: return TD_CMD_UNSELECT_ALL_REGEX;
+    case TD_PROMPT_SEARCH_FWD:         return TD_CMD_SEARCH_FWD;
+    case TD_PROMPT_SEARCH_BWD:         return TD_CMD_SEARCH_BWD;
+    case TD_PROMPT_SEARCH_ALL_FWD:     return TD_CMD_SEARCH_ALL_FWD;
+    case TD_PROMPT_SEARCH_ALL_BWD:     return TD_CMD_SEARCH_ALL_BWD;
+    case TD_PROMPT_EDIT_CELL:          return TD_CMD_EDIT_CELL;
+    case TD_PROMPT_EDIT_SELECTED:      return TD_CMD_EDIT_SELECTED;
+    case TD_PROMPT_ADD_ROWS:           return TD_CMD_ADD_ROWS;
+    default:                           return TD_CMD_NONE;
+    }
 }
 
 static void td_handle_prompt_result(td_prompt_result_t pr, td_prompt_t *prompt,
-                                    td_sheet_t *active, char *msg,
-                                    size_t msg_cap)
+                                    td_exec_ctx_t *ctx)
 {
     td_prompt_kind_t kind = td_prompt_kind(prompt);
 
-    if (pr == TD_PROMPT_ACCEPT && active) {
+    if (pr == TD_PROMPT_ACCEPT) {
         const char *text = td_prompt_text(prompt);
+        td_cmd_t cmd = td_prompt_to_cmd(kind);
 
-        switch (kind) {
-        case TD_PROMPT_RENAME_COL:
-            if (td_sheet_rename_col(active, active->cursor_col, text))
-                td_set_message(msg, msg_cap, "renamed column to %s", text);
-            break;
-        case TD_PROMPT_COL_WIDTH: {
-            int width = 0;
-
-            if (!td_parse_width_text(text, &width)) {
-                td_set_message(msg, msg_cap, "invalid width: %s", text);
-            } else if (td_sheet_set_col_width(active, active->cursor_col,
-                                              width)) {
-                if (width == 0)
-                    td_set_message(msg, msg_cap, "column hidden");
-                else
-                    td_set_message(msg, msg_cap, "column width %d", width);
-            }
-            break;
-        }
-        case TD_PROMPT_SAVE_SHEET: {
-            char err[256];
-
-            if (!text[0]) {
-                td_set_message(msg, msg_cap, "save cancelled: empty path");
-            } else if (td_csv_save_sheet(active, text, '\0', err,
-                                         sizeof(err))) {
-                td_set_message(msg, msg_cap, "saved %zu rows to %s",
-                               active->nrows, text);
-            } else {
-                td_set_message(msg, msg_cap, "save failed: %s", err);
-            }
-            break;
-        }
-        case TD_PROMPT_SELECT_REGEX:
-        case TD_PROMPT_UNSELECT_REGEX:
-        case TD_PROMPT_SELECT_ALL_REGEX:
-        case TD_PROMPT_UNSELECT_ALL_REGEX: {
-            bool all_cols = kind == TD_PROMPT_SELECT_ALL_REGEX ||
-                            kind == TD_PROMPT_UNSELECT_ALL_REGEX;
-            bool select = kind == TD_PROMPT_SELECT_REGEX ||
-                          kind == TD_PROMPT_SELECT_ALL_REGEX;
-            size_t matched = 0;
-            char err[256];
-
-            if (!text[0]) {
-                td_set_message(msg, msg_cap, "empty regex");
-            } else if (td_sheet_select_regex(active, text, all_cols, select,
-                                             &matched, err, sizeof(err))) {
-                td_set_message(msg, msg_cap, "%s %zu %s",
-                               select ? "selected" : "unselected",
-                               matched, matched == 1 ? "row" : "rows");
-            } else {
-                td_set_message(msg, msg_cap, "invalid regex: %s", err);
-            }
-            break;
-        }
-        case TD_PROMPT_SEARCH_FWD:
-        case TD_PROMPT_SEARCH_BWD:
-        case TD_PROMPT_SEARCH_ALL_FWD:
-        case TD_PROMPT_SEARCH_ALL_BWD: {
-            int dir = (kind == TD_PROMPT_SEARCH_FWD ||
-                       kind == TD_PROMPT_SEARCH_ALL_FWD)
-                          ? 1
-                          : -1;
-            bool all_cols = kind == TD_PROMPT_SEARCH_ALL_FWD ||
-                            kind == TD_PROMPT_SEARCH_ALL_BWD;
-            char err[256];
-
-            if (!td_sheet_search(active, text, dir, all_cols, err, sizeof(err)))
-                td_set_message(msg, msg_cap, "%s", err);
-            break;
-        }
-        case TD_PROMPT_NONE:
-            break;
-        }
+        if (cmd != TD_CMD_NONE)
+            (void)td_exec_action(cmd, text, ctx, NULL, 0);
         td_prompt_stop(prompt);
     } else if (pr == TD_PROMPT_CANCEL) {
         const char *what = "cancelled";
@@ -883,34 +1200,54 @@ static void td_handle_prompt_result(td_prompt_result_t pr, td_prompt_t *prompt,
                  kind == TD_PROMPT_SELECT_ALL_REGEX ||
                  kind == TD_PROMPT_UNSELECT_ALL_REGEX)
             what = "selection cancelled";
+        else if (kind == TD_PROMPT_EDIT_CELL ||
+                 kind == TD_PROMPT_EDIT_SELECTED)
+            what = "edit cancelled";
+        else if (kind == TD_PROMPT_ADD_ROWS)
+            what = "add rows cancelled";
         td_prompt_stop(prompt);
-        td_set_message(msg, msg_cap, "%s", what);
+        td_set_message(ctx->msg, ctx->msg_cap, "%s", what);
     }
+}
+
+static bool td_replay_exec_cb(td_cmd_t cmd, const char *input, void *ctx,
+                              char *err, size_t err_cap)
+{
+    return td_exec_action(cmd, input, (td_exec_ctx_t *)ctx, err, err_cap);
 }
 
 int main(int argc, char **argv)
 {
     bool demo = false;
+    bool batch = false;
     bool stop_flags = false;
+    const char *play_path = NULL;
     td_csv_opts_t csv_opts;
     const char **files = NULL;
     size_t nfiles = 0;
     td_stack_t stack = { 0 };
+    td_clipboard_t clip;
+    td_cmdlog_t cmdlog;
     td_term_t term;
     td_key_reader_t reader;
     td_input_t input;
     td_prompt_t prompt;
     td_view_state_t view;
+    td_exec_ctx_t exec_ctx;
     char msg[512] = "";
     char err[256] = "";
     bool quit = false;
     int rc = 0;
 
     td_csv_opts_default(&csv_opts);
+    td_clipboard_init(&clip);
+    td_cmdlog_init(&cmdlog);
     if (argc > 1) {
         files = calloc((size_t)argc, sizeof(*files));
         if (!files) {
             fprintf(stderr, "tam-data: out of memory\n");
+            td_clipboard_free(&clip);
+            td_cmdlog_free(&cmdlog);
             return 1;
         }
     }
@@ -929,15 +1266,23 @@ int main(int argc, char **argv)
                 else
                     printf("tam-data %s\n", td_version());
                 free(files);
+                td_clipboard_free(&clip);
+                td_cmdlog_free(&cmdlog);
                 return 0;
             }
             if (strcmp(arg, "--help") == 0 || strcmp(arg, "-h") == 0) {
                 td_usage(stdout);
                 free(files);
+                td_clipboard_free(&clip);
+                td_cmdlog_free(&cmdlog);
                 return 0;
             }
             if (strcmp(arg, "--demo") == 0) {
                 demo = true;
+                continue;
+            }
+            if (strcmp(arg, "--batch") == 0 || strcmp(arg, "-b") == 0) {
+                batch = true;
                 continue;
             }
             if (strcmp(arg, "--csv") == 0) {
@@ -953,12 +1298,37 @@ int main(int argc, char **argv)
                 csv_opts.has_header = false;
                 continue;
             }
+            if (strcmp(arg, "-p") == 0 || strcmp(arg, "--play") == 0) {
+                if (i + 1 >= argc || !argv[i + 1][0]) {
+                    fprintf(stderr, "tam-data: %s requires a script path\n",
+                            arg);
+                    free(files);
+                    td_clipboard_free(&clip);
+                    td_cmdlog_free(&cmdlog);
+                    return 2;
+                }
+                play_path = argv[++i];
+                continue;
+            }
+            if (strncmp(arg, "--play=", 7) == 0) {
+                if (!arg[7]) {
+                    fprintf(stderr, "tam-data: --play requires a script path\n");
+                    free(files);
+                    td_clipboard_free(&clip);
+                    td_cmdlog_free(&cmdlog);
+                    return 2;
+                }
+                play_path = arg + 7;
+                continue;
+            }
             if (strcmp(arg, "-d") == 0 || strcmp(arg, "--delimiter") == 0) {
                 if (i + 1 >= argc ||
                     !td_parse_delimiter_arg(argv[i + 1], &csv_opts.delimiter)) {
                     fprintf(stderr, "tam-data: %s requires a single-character delimiter\n",
                             arg);
                     free(files);
+                    td_clipboard_free(&clip);
+                    td_cmdlog_free(&cmdlog);
                     return 2;
                 }
                 i++;
@@ -969,6 +1339,8 @@ int main(int argc, char **argv)
                     fprintf(stderr, "tam-data: invalid delimiter: %s\n",
                             arg + 12);
                     free(files);
+                    td_clipboard_free(&clip);
+                    td_cmdlog_free(&cmdlog);
                     return 2;
                 }
                 continue;
@@ -978,6 +1350,8 @@ int main(int argc, char **argv)
                     fprintf(stderr, "tam-data: invalid delimiter: %s\n",
                             arg + 2);
                     free(files);
+                    td_clipboard_free(&clip);
+                    td_cmdlog_free(&cmdlog);
                     return 2;
                 }
                 continue;
@@ -985,6 +1359,8 @@ int main(int argc, char **argv)
             fprintf(stderr, "tam-data: unknown argument: %s\n", arg);
             td_usage(stderr);
             free(files);
+            td_clipboard_free(&clip);
+            td_cmdlog_free(&cmdlog);
             return 2;
         }
         files[nfiles++] = arg;
@@ -1006,6 +1382,8 @@ int main(int argc, char **argv)
                 td_sheet_free(sheet);
                 td_stack_free(&stack);
                 free(files);
+                td_clipboard_free(&clip);
+                td_cmdlog_free(&cmdlog);
                 return 1;
             }
         }
@@ -1018,6 +1396,8 @@ int main(int argc, char **argv)
                     err[0] ? err : "failed to load stdin");
             td_sheet_free(sheet);
             free(files);
+            td_clipboard_free(&clip);
+            td_cmdlog_free(&cmdlog);
             return 1;
         }
     } else {
@@ -1027,16 +1407,48 @@ int main(int argc, char **argv)
             fprintf(stderr, "tam-data: cannot create demo sheet\n");
             td_sheet_free(sheet);
             free(files);
+            td_clipboard_free(&clip);
+            td_cmdlog_free(&cmdlog);
             return 1;
         }
     }
     free(files);
 
+    exec_ctx.stack = &stack;
+    exec_ctx.clip = &clip;
+    exec_ctx.cmdlog = &cmdlog;
+    exec_ctx.term = NULL;
+    exec_ctx.msg = msg;
+    exec_ctx.msg_cap = sizeof(msg);
+    exec_ctx.quit = &quit;
+
+    if (play_path) {
+        if (!td_cmdlog_replay_file(play_path, &stack, td_replay_exec_cb,
+                                   &exec_ctx, &quit, err, sizeof(err))) {
+            fprintf(stderr, "tam-data: replay failed: %s\n",
+                    err[0] ? err : "unknown error");
+            td_stack_free(&stack);
+            td_clipboard_free(&clip);
+            td_cmdlog_free(&cmdlog);
+            return 1;
+        }
+    }
+
+    if (batch || quit || stack.len == 0) {
+        td_stack_free(&stack);
+        td_clipboard_free(&clip);
+        td_cmdlog_free(&cmdlog);
+        return 0;
+    }
+
     if (td_term_open(&term, getenv("TERM"), td_locale()) != 0) {
         fprintf(stderr, "tam-data: cannot open controlling terminal\n");
         td_stack_free(&stack);
+        td_clipboard_free(&clip);
+        td_cmdlog_free(&cmdlog);
         return 1;
     }
+    exec_ctx.term = &term;
 
     td_key_reader_fd(&reader, term.fd_in);
     td_input_init(&input);
@@ -1089,20 +1501,20 @@ int main(int argc, char **argv)
         if (prompt.active) {
             td_prompt_result_t pr = td_prompt_key(&prompt, key);
 
-            active = td_stack_active(&stack);
-            td_handle_prompt_result(pr, &prompt, active, msg, sizeof(msg));
+            td_handle_prompt_result(pr, &prompt, &exec_ctx);
             continue;
         }
 
         td_cmd_t cmd = td_input_feed(&input, key);
 
-        td_handle_command(cmd, &stack, &term, &prompt, msg, sizeof(msg),
-                          &quit);
+        td_handle_command(cmd, &exec_ctx, &prompt);
     }
 
     td_term_close(&term);
     td_prompt_free(&prompt);
     td_stack_free(&stack);
+    td_clipboard_free(&clip);
+    td_cmdlog_free(&cmdlog);
     return rc;
 }
 

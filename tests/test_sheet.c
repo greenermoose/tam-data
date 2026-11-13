@@ -325,6 +325,155 @@ static void test_sheet_phase2_select_search_filter_sort(void)
     }
 }
 
+static void test_sheet_phase3_edit_insert_dup_undo(void)
+{
+    td_sheet_t *s = td_sheet_new("p3", "");
+    char desc[64];
+    char buf[64];
+
+    TD_CHECK(s != NULL);
+    if (!s)
+        return;
+
+    td_sheet_add_col(s, "name", TD_TYPE_STR, -20);
+    td_sheet_add_col(s, "qty", TD_TYPE_INT, -10);
+    td_sheet_add_row(s);
+    td_sheet_add_row(s);
+    td_sheet_add_row(s);
+    td_sheet_set_cell(s, 0, 0, td_val_parse(td_slice_from_cstr("alice"), TD_TYPE_STR));
+    td_sheet_set_cell(s, 1, 0, td_val_parse(td_slice_from_cstr("bob"), TD_TYPE_STR));
+    td_sheet_set_cell(s, 2, 0, td_val_parse(td_slice_from_cstr("carol"), TD_TYPE_STR));
+    td_sheet_set_cell(s, 0, 1, td_val_parse(td_slice_from_cstr("30"), TD_TYPE_INT));
+    td_sheet_set_cell(s, 1, 1, td_val_parse(td_slice_from_cstr("10"), TD_TYPE_INT));
+    td_sheet_set_cell(s, 2, 1, td_val_parse(td_slice_from_cstr("20"), TD_TYPE_INT));
+
+    TD_CHECK(!td_sheet_can_undo(s));
+    TD_CHECK(!td_sheet_can_redo(s));
+
+    /* Edit cell + invalid parse preserving #ERR raw text + undo/redo. */
+    s->cursor_row = 1;
+    s->cursor_col = 1;
+    TD_CHECK(td_sheet_edit_cell(s, 1, 1, "99"));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[1], 1).as.i, 99);
+    TD_CHECK(td_sheet_can_undo(s));
+    TD_CHECK(td_sheet_edit_cell(s, 1, 1, "oops"));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[1], 1).type, TD_TYPE_ERR);
+    td_val_format(td_sheet_get_cell(s, s->row_order[1], 1), TD_TYPE_INT,
+                  buf, sizeof(buf));
+    TD_CHECK_STR(buf, "oops");
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[1], 1).as.i, 99);
+    TD_CHECK(td_sheet_redo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[1], 1).type, TD_TYPE_ERR);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[1], 1).as.i, 10);
+
+    /* Bulk edit selected (ge) and clear cell (zd) + single-step undo. */
+    td_sheet_select_row(s, s->row_order[0]);
+    td_sheet_select_row(s, s->row_order[2]);
+    TD_CHECK_INT(td_sheet_edit_selected(s, 1, "55"), 2);
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[0], 1).as.i, 55);
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[2], 1).as.i, 55);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[0], 1).as.i, 30);
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[2], 1).as.i, 20);
+
+    TD_CHECK(td_sheet_clear_cell(s, 0, 1));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[0], 1).type, TD_TYPE_NULL);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[0], 1).as.i, 30);
+    td_sheet_unselect_all(s);
+
+    /* Insert blank rows immediately after cursor_row (a / ga) + undo/redo. */
+    s->cursor_row = 0;
+    TD_CHECK(td_sheet_insert_rows(s, 1, 2));
+    TD_CHECK_INT(s->nrows, 5);
+    TD_CHECK_INT(s->cursor_row, 1);
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[1], 0).type, TD_TYPE_NULL);
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[3], 1).as.i, 10);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->nrows, 3);
+    TD_CHECK_INT(s->cursor_row, 0);
+    TD_CHECK(td_sheet_redo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->nrows, 5);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+
+    /* Duplicate row (g") and duplicate column (z") and append blank col (za). */
+    s->cursor_row = 0;
+    TD_CHECK(td_sheet_dup_row(s, 0));
+    TD_CHECK_INT(s->nrows, 4);
+    td_val_format(td_sheet_get_cell(s, s->row_order[1], 0), TD_TYPE_STR,
+                  buf, sizeof(buf));
+    TD_CHECK_STR(buf, "alice");
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->nrows, 3);
+
+    size_t cidx = td_sheet_append_blank_col(s);
+    TD_CHECK_INT(cidx, 2);
+    TD_CHECK_INT(s->ncols, 3);
+    TD_CHECK_STR(s->cols[2].name, "col3");
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->ncols, 2);
+    TD_CHECK(td_sheet_redo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->ncols, 3);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+
+    TD_CHECK(td_sheet_dup_col(s, 0));
+    TD_CHECK_INT(s->ncols, 3);
+    TD_CHECK_STR(s->cols[1].name, "name_copy");
+    td_val_format(td_sheet_get_cell(s, s->row_order[1], 1), TD_TYPE_STR,
+                  buf, sizeof(buf));
+    TD_CHECK_STR(buf, "bob");
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->ncols, 2);
+
+    /* Undo sort ([), delete (d), hide (-), rename (^), move (H/L), type (#). */
+    TD_CHECK(td_sheet_sort_col(s, 1, false));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[0], 1).as.i, 10);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[0], 1).as.i, 30);
+
+    TD_CHECK(td_sheet_delete_row(s, 1));
+    TD_CHECK_INT(s->nrows, 2);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->nrows, 3);
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[1], 1).as.i, 10);
+
+    s->cursor_col = 0;
+    td_sheet_hide_col(s, 0);
+    TD_CHECK_INT(s->cols[0].width, 0);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK(s->cols[0].width != 0);
+    TD_CHECK_INT(s->cursor_col, 0);
+
+    TD_CHECK(td_sheet_rename_col(s, 0, "person"));
+    TD_CHECK_STR(s->cols[0].name, "person");
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_STR(s->cols[0].name, "name");
+
+    TD_CHECK(td_sheet_move_col(s, 0, 1));
+    TD_CHECK_STR(s->cols[0].name, "qty");
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_STR(s->cols[0].name, "name");
+
+    /* Lossless undo of column type conversion (e.g. non-numeric STR -> INT -> undo). */
+    TD_CHECK(td_sheet_set_col_type(s, 0, TD_TYPE_INT));
+    TD_CHECK_INT(td_sheet_get_cell(s, s->row_order[0], 0).type, TD_TYPE_ERR);
+    TD_CHECK(td_sheet_undo(s, desc, sizeof(desc)));
+    TD_CHECK_INT(s->cols[0].type, TD_TYPE_STR);
+    td_val_format(td_sheet_get_cell(s, s->row_order[0], 0), TD_TYPE_STR,
+                  buf, sizeof(buf));
+    TD_CHECK_STR(buf, "alice");
+
+    /* New edit clears redo stack. */
+    TD_CHECK(td_sheet_can_redo(s));
+    TD_CHECK(td_sheet_edit_cell(s, 0, 1, "123"));
+    TD_CHECK(!td_sheet_can_redo(s));
+
+    td_sheet_free(s);
+}
+
 void test_sheet(void)
 {
     td_sheet_t *s = make_sheet();
@@ -450,4 +599,5 @@ void test_sheet(void)
 
     test_sheet_phase1_nav_and_cols();
     test_sheet_phase2_select_search_filter_sort();
+    test_sheet_phase3_edit_insert_dup_undo();
 }

@@ -338,6 +338,14 @@ static td_cmd_t td_input_single(td_key_t key)
     case 'N': return TD_CMD_SEARCH_PREV;
     case '"': return TD_CMD_DUP_SELECTED;
     case 'd': return TD_CMD_DELETE_ROW;
+    case 'e': return TD_CMD_EDIT_CELL;
+    case 'a': return TD_CMD_ADD_ROW;
+    case 'y': return TD_CMD_YANK_ROW;
+    case 'p': return TD_CMD_PASTE_AFTER;
+    case 'P': return TD_CMD_PASTE_BEFORE;
+    case 'U': return TD_CMD_UNDO;
+    case 'R': return TD_CMD_REDO;
+    case 'D': return TD_CMD_SHOW_CMDLOG;
     case '[': return TD_CMD_SORT_ASC;
     case ']': return TD_CMD_SORT_DESC;
     case '-': return TD_CMD_HIDE_COL;
@@ -399,6 +407,10 @@ td_cmd_t td_input_feed(td_input_t *in, td_key_t key)
         case '/': return TD_CMD_SEARCH_ALL_FWD;
         case '?': return TD_CMD_SEARCH_ALL_BWD;
         case 'd': return TD_CMD_DELETE_SELECTED;
+        case 'e': return TD_CMD_EDIT_SELECTED;
+        case 'a': return TD_CMD_ADD_ROWS;
+        case 'y': return TD_CMD_YANK_SELECTED;
+        case '"': return TD_CMD_DUP_ROW;
         case '[': return TD_CMD_SORT_KEYS_ASC;
         case ']': return TD_CMD_SORT_KEYS_DESC;
         case '_': return TD_CMD_AUTOSIZE_ALL_COLS;
@@ -417,13 +429,23 @@ td_cmd_t td_input_feed(td_input_t *in, td_key_t key)
         switch (key.ch) {
         case '_': return TD_CMD_SET_COL_WIDTH;
         case '~': return TD_CMD_TYPE_ANY;
+        case 'a': return TD_CMD_ADD_COL;
+        case 'd': return TD_CMD_CLEAR_CELL;
+        case 'y': return TD_CMD_YANK_CELL;
+        case 'p': return TD_CMD_PASTE_CELL;
+        case '"': return TD_CMD_DUP_COL;
         default:  return TD_CMD_NONE;
         }
     }
 
-    /* gz is a reserved prefix with no bindings yet. */
     in->prefix = 0;
-    return TD_CMD_NONE;
+    if (key.kind != TD_KEY_CHAR)
+        return TD_CMD_NONE;
+    switch (key.ch) {
+    case 'y': return TD_CMD_YANK_SELECTED_CELLS;
+    case 'd': return TD_CMD_CLEAR_SELECTED;
+    default:  return TD_CMD_NONE;
+    }
 }
 
 static bool td_prompt_reserve(td_prompt_t *p, size_t extra)
@@ -445,6 +467,56 @@ static bool td_prompt_reserve(td_prompt_t *p, size_t extra)
     return true;
 }
 
+static char *td_strdup_heap(const char *s)
+{
+    size_t len = s ? strlen(s) : 0;
+    char *copy = malloc(len + 1);
+
+    if (!copy)
+        return NULL;
+    if (len)
+        memcpy(copy, s, len);
+    copy[len] = '\0';
+    return copy;
+}
+
+static void td_prompt_hist_push(td_prompt_t *p)
+{
+    td_prompt_hist_t *h;
+    const char *text = p->buf ? p->buf : "";
+    char *copy;
+
+    if (!text[0] || (size_t)p->kind >= TD_PROMPT_KIND_COUNT)
+        return;
+    h = &p->hist[p->kind];
+    if (h->len > 0 && strcmp(h->items[h->len - 1], text) == 0)
+        return;
+    copy = td_strdup_heap(text);
+    if (!copy)
+        return;
+    if (h->len == TD_PROMPT_HIST_MAX) {
+        free(h->items[0]);
+        memmove(&h->items[0], &h->items[1],
+                (TD_PROMPT_HIST_MAX - 1) * sizeof(h->items[0]));
+        h->len--;
+    }
+    h->items[h->len++] = copy;
+}
+
+static bool td_prompt_set_text(td_prompt_t *p, const char *text)
+{
+    size_t n = text ? strlen(text) : 0;
+
+    if (!td_prompt_reserve(p, n))
+        return false;
+    if (n)
+        memcpy(p->buf, text, n);
+    p->buf[n] = '\0';
+    p->len = n;
+    p->cursor = n;
+    return true;
+}
+
 void td_prompt_init(td_prompt_t *p)
 {
     if (!p)
@@ -458,6 +530,11 @@ void td_prompt_free(td_prompt_t *p)
         return;
     free(p->label);
     free(p->buf);
+    free(p->draft);
+    for (size_t k = 0; k < TD_PROMPT_KIND_COUNT; k++) {
+        for (size_t i = 0; i < p->hist[k].len; i++)
+            free(p->hist[k].items[i]);
+    }
     memset(p, 0, sizeof(*p));
 }
 
@@ -470,14 +547,12 @@ void td_prompt_start_kind(td_prompt_t *p, td_prompt_kind_t kind,
         return;
     free(p->label);
     p->label = NULL;
-    if (label) {
-        size_t len = strlen(label);
-
-        p->label = malloc(len + 1);
-        if (p->label)
-            memcpy(p->label, label, len + 1);
-    }
-    p->kind = kind;
+    if (label)
+        p->label = td_strdup_heap(label);
+    free(p->draft);
+    p->draft = NULL;
+    p->kind = (size_t)kind < TD_PROMPT_KIND_COUNT ? kind : TD_PROMPT_NONE;
+    p->hist_pos = p->hist[p->kind].len;
     p->len = 0;
     p->cursor = 0;
     if (p->buf)
@@ -503,6 +578,8 @@ void td_prompt_stop(td_prompt_t *p)
     if (p) {
         p->active = false;
         p->kind = TD_PROMPT_NONE;
+        free(p->draft);
+        p->draft = NULL;
     }
 }
 
@@ -575,11 +652,44 @@ td_prompt_result_t td_prompt_key(td_prompt_t *p, td_key_t key)
     if (!p || !p->active)
         return TD_PROMPT_IGNORE;
 
-    if (key.kind == TD_KEY_ENTER)
+    if (key.kind == TD_KEY_ENTER) {
+        td_prompt_hist_push(p);
         return TD_PROMPT_ACCEPT;
+    }
     if (key.kind == TD_KEY_ESC ||
         (key.kind == TD_KEY_CHAR && key.ch == 3))
         return TD_PROMPT_CANCEL;
+
+    if (key.kind == TD_KEY_UP ||
+        (key.kind == TD_KEY_CHAR && key.ch == 16)) { /* Ctrl+P */
+        td_prompt_hist_t *h = &p->hist[p->kind];
+
+        if (h->len == 0 || p->hist_pos == 0)
+            return TD_PROMPT_IGNORE;
+        if (p->hist_pos == h->len) {
+            free(p->draft);
+            p->draft = td_strdup_heap(p->buf ? p->buf : "");
+        }
+        p->hist_pos--;
+        (void)td_prompt_set_text(p, h->items[p->hist_pos]);
+        return TD_PROMPT_CHANGED;
+    }
+    if (key.kind == TD_KEY_DOWN ||
+        (key.kind == TD_KEY_CHAR && key.ch == 14)) { /* Ctrl+N */
+        td_prompt_hist_t *h = &p->hist[p->kind];
+
+        if (p->hist_pos >= h->len)
+            return TD_PROMPT_IGNORE;
+        p->hist_pos++;
+        if (p->hist_pos == h->len) {
+            (void)td_prompt_set_text(p, p->draft ? p->draft : "");
+            free(p->draft);
+            p->draft = NULL;
+        } else {
+            (void)td_prompt_set_text(p, h->items[p->hist_pos]);
+        }
+        return TD_PROMPT_CHANGED;
+    }
 
     if (key.kind == TD_KEY_LEFT ||
         (key.kind == TD_KEY_CHAR && key.ch == 1)) {

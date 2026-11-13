@@ -17,6 +17,8 @@ int main(void)
     test_csv();
     test_term();
     test_input();
+    test_clipboard();
+    test_cmdlog();
 
     if (td_tests_failed) {
         fprintf(stderr, "%d of %d checks failed\n", td_tests_failed,

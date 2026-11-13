@@ -49,5 +49,7 @@ void test_sheet(void);
 void test_csv(void);
 void test_term(void);
 void test_input(void);
+void test_clipboard(void);
+void test_cmdlog(void);
 
 #endif /* TD_TEST_H */

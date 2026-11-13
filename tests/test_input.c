@@ -255,5 +255,85 @@ void test_input(void)
     TD_CHECK_INT(td_prompt_kind(&p), TD_PROMPT_SEARCH_ALL_BWD);
     td_prompt_stop(&p);
 
+    /* Phase 3 chords and prompt kinds. */
+    TD_CHECK_INT(td_input_feed(&in, key_char('e')), TD_CMD_EDIT_CELL);
+    TD_CHECK_INT(td_input_feed(&in, key_char('a')), TD_CMD_ADD_ROW);
+    TD_CHECK_INT(td_input_feed(&in, key_char('y')), TD_CMD_YANK_ROW);
+    TD_CHECK_INT(td_input_feed(&in, key_char('p')), TD_CMD_PASTE_AFTER);
+    TD_CHECK_INT(td_input_feed(&in, key_char('P')), TD_CMD_PASTE_BEFORE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('U')), TD_CMD_UNDO);
+    TD_CHECK_INT(td_input_feed(&in, key_char('R')), TD_CMD_REDO);
+    TD_CHECK_INT(td_input_feed(&in, key_char('D')), TD_CMD_SHOW_CMDLOG);
+
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('e')), TD_CMD_EDIT_SELECTED);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('a')), TD_CMD_ADD_ROWS);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('y')), TD_CMD_YANK_SELECTED);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('"')), TD_CMD_DUP_ROW);
+
+    TD_CHECK_INT(td_input_feed(&in, key_char('z')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('a')), TD_CMD_ADD_COL);
+    TD_CHECK_INT(td_input_feed(&in, key_char('z')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('d')), TD_CMD_CLEAR_CELL);
+    TD_CHECK_INT(td_input_feed(&in, key_char('z')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('y')), TD_CMD_YANK_CELL);
+    TD_CHECK_INT(td_input_feed(&in, key_char('z')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('p')), TD_CMD_PASTE_CELL);
+    TD_CHECK_INT(td_input_feed(&in, key_char('z')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('"')), TD_CMD_DUP_COL);
+
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('z')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('y')), TD_CMD_YANK_SELECTED_CELLS);
+    TD_CHECK_INT(td_input_feed(&in, key_char('g')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('z')), TD_CMD_NONE);
+    TD_CHECK_INT(td_input_feed(&in, key_char('d')), TD_CMD_CLEAR_SELECTED);
+
+    /* Prompt history per kind + draft preservation. */
+    td_prompt_start_kind(&p, TD_PROMPT_EDIT_CELL, "edit cell:", "");
+    TD_CHECK_INT(td_prompt_key(&p, key_char('f')), TD_PROMPT_CHANGED);
+    TD_CHECK_INT(td_prompt_key(&p, key_char('o')), TD_PROMPT_CHANGED);
+    TD_CHECK_INT(td_prompt_key(&p, key_char('o')), TD_PROMPT_CHANGED);
+    TD_CHECK_INT(td_prompt_key(&p, (td_key_t){ TD_KEY_ENTER, 0 }),
+                 TD_PROMPT_ACCEPT);
+    td_prompt_stop(&p);
+
+    td_prompt_start_kind(&p, TD_PROMPT_EDIT_CELL, "edit cell:", "");
+    TD_CHECK_INT(td_prompt_key(&p, key_char('b')), TD_PROMPT_CHANGED);
+    TD_CHECK_INT(td_prompt_key(&p, key_char('a')), TD_PROMPT_CHANGED);
+    TD_CHECK_INT(td_prompt_key(&p, key_char('r')), TD_PROMPT_CHANGED);
+    TD_CHECK_INT(td_prompt_key(&p, (td_key_t){ TD_KEY_ENTER, 0 }),
+                 TD_PROMPT_ACCEPT);
+    td_prompt_stop(&p);
+
+    /* Different prompt kind has isolated empty history. */
+    td_prompt_start_kind(&p, TD_PROMPT_ADD_ROWS, "add rows:", "1");
+    TD_CHECK_INT(td_prompt_key(&p, (td_key_t){ TD_KEY_UP, 0 }),
+                 TD_PROMPT_IGNORE);
+    td_prompt_stop(&p);
+
+    /* Navigate edit history up/down while preserving draft "wip". */
+    td_prompt_start_kind(&p, TD_PROMPT_EDIT_CELL, "edit cell:", "wip");
+    TD_CHECK_INT(td_prompt_key(&p, (td_key_t){ TD_KEY_UP, 0 }),
+                 TD_PROMPT_CHANGED);
+    TD_CHECK_STR(td_prompt_text(&p), "bar");
+    TD_CHECK_INT(td_prompt_key(&p, (td_key_t){ TD_KEY_UP, 0 }),
+                 TD_PROMPT_CHANGED);
+    TD_CHECK_STR(td_prompt_text(&p), "foo");
+    TD_CHECK_INT(td_prompt_key(&p, (td_key_t){ TD_KEY_UP, 0 }),
+                 TD_PROMPT_IGNORE);
+    TD_CHECK_INT(td_prompt_key(&p, (td_key_t){ TD_KEY_DOWN, 0 }),
+                 TD_PROMPT_CHANGED);
+    TD_CHECK_STR(td_prompt_text(&p), "bar");
+    TD_CHECK_INT(td_prompt_key(&p, (td_key_t){ TD_KEY_DOWN, 0 }),
+                 TD_PROMPT_CHANGED);
+    TD_CHECK_STR(td_prompt_text(&p), "wip");
+    TD_CHECK_INT(td_prompt_key(&p, (td_key_t){ TD_KEY_DOWN, 0 }),
+                 TD_PROMPT_IGNORE);
+    td_prompt_stop(&p);
+
     td_prompt_free(&p);
 }
