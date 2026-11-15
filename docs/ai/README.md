@@ -9,3 +9,5 @@ missing history. See [the provenance overview](../../AI_PROVENANCE.md).
 | 2026-11-08 | [Initial planning and Phase 0 implementation](2026-11-08-foundation.md) |
 | 2026-11-12 | [Naming, workplan, and version milestones](2026-11-12-naming-and-roadmap.md) |
 | 2026-11-12 | [GPL licensing and publication preparation](2026-11-12-publication-preparation.md) |
+
+- [2026-11-15: Publication preparation](2026-11-15-publication.md).

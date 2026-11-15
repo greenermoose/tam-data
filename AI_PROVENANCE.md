@@ -32,3 +32,9 @@ session by assuming it matches a different session.
 | Phase 0 code and tests | `25b24c9`; [foundation record](docs/ai/2026-11-08-foundation.md) | OpenCode contribution recorded in commit trailers; implementation prompt and transcript not found |
 | Rename to tam-data and document version milestones | `fcd4846`, `79d1d76`; [naming and roadmap record](docs/ai/2026-11-12-naming-and-roadmap.md) | Antigravity-assisted changes; retained prompts and model selections verified, CLI versions unverified |
 | GPL licensing, publication preparation, and initial GitHub publication | [preparation record](docs/ai/2026-11-12-publication-preparation.md) | Codex-assisted documentation, verification, and repository publication on Fred's explicit request; existing application source unchanged |
+
+## Publication preparation, 2026-11-15
+
+Codex CLI 0.169.0 with `gpt-6.1-sol` removed local reference paths from
+unpublished documentation and prepared publication. Existing implementation
+authorship is unchanged. See the [session record](docs/ai/2026-11-15-publication.md).
