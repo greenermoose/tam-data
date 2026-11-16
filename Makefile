@@ -26,6 +26,10 @@ ifndef LIBTAM_PREFIX
   ifeq ($(origin LIBTAM_LIBS),undefined)
     ifneq ($(wildcard $(PREFIX)/include/tam.h),)
       LIBTAM_PREFIX := $(PREFIX)
+    else ifneq ($(wildcard $(HOME)/.local/include/tam.h),)
+      LIBTAM_PREFIX := $(HOME)/.local
+    else ifneq ($(wildcard $(HOME)/.local/dev/include/tam.h),)
+      LIBTAM_PREFIX := $(HOME)/.local/dev
     endif
   endif
 endif
