@@ -10,11 +10,11 @@ CFLAGS   ?= -O2 -Wall -Wextra -Wpedantic -Werror -std=c11
 CPPFLAGS += -D_POSIX_C_SOURCE=200809L -D_GNU_SOURCE -Isrc
 
 # When Nix is detected (e.g. Tamlinux with Home Manager, where ~/.local/bin is
-# store-linked and /usr/local is retired), default development installs to the
-# user development prefix $(HOME)/.local/dev rather than root-owned /usr/local.
+# store-linked and /usr/local is retired), default user installs go to
+# $(HOME)/.local rather than root-owned /usr/local.
 ifndef PREFIX
   ifneq ($(or $(NIX_PROFILES),$(wildcard $(HOME)/.nix-profile)),)
-    PREFIX := $(HOME)/.local/dev
+    PREFIX := $(HOME)/.local
   else
     PREFIX := /usr/local
   endif
