@@ -8,7 +8,7 @@ trap 'rm -rf "$TMPDIR"' EXIT
 # 1. --version and --help
 ver="$("$BIN" --version)"
 case "$ver" in
-    "tam-data 1.0.0"*) ;;
+    "tam-data 1.0.1"*) ;;
     *) echo "FAIL: unexpected --version output: $ver" >&2; exit 1 ;;
 esac
 

@@ -3,8 +3,8 @@
 
 #define TD_VERSION_MAJOR 1
 #define TD_VERSION_MINOR 0
-#define TD_VERSION_PATCH 0
-#define TD_VERSION_STRING "1.0.0"
+#define TD_VERSION_PATCH 1
+#define TD_VERSION_STRING "1.0.1"
 
 #ifndef TD_BUILD_ID
 #define TD_BUILD_ID ""

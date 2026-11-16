@@ -59,6 +59,39 @@ DEPS := src/version.h src/utf8.h src/arena.h src/val.h src/expr.h src/sheet.h \
         src/plot.h src/term.h src/input.h src/clipboard.h src/cmdlog.h \
         src/agg.h src/tam-data.h
 
+VERSION_FILE := VERSION
+TD_VERSION := $(shell tr -d '[:space:]' < $(VERSION_FILE))
+TD_VERSION_MAJOR := $(shell echo $(TD_VERSION) | cut -d. -f1)
+TD_VERSION_MINOR := $(shell echo $(TD_VERSION) | cut -d. -f2)
+TD_VERSION_PATCH := $(shell echo $(TD_VERSION) | cut -d. -f3)
+
+src/version.h: $(VERSION_FILE)
+	@{ \
+	  echo '#ifndef TD_VERSION_H'; \
+	  echo '#define TD_VERSION_H'; \
+	  echo ''; \
+	  echo '#define TD_VERSION_MAJOR $(TD_VERSION_MAJOR)'; \
+	  echo '#define TD_VERSION_MINOR $(TD_VERSION_MINOR)'; \
+	  echo '#define TD_VERSION_PATCH $(TD_VERSION_PATCH)'; \
+	  echo '#define TD_VERSION_STRING "$(TD_VERSION)"'; \
+	  echo ''; \
+	  echo '#ifndef TD_BUILD_ID'; \
+	  echo '#define TD_BUILD_ID ""'; \
+	  echo '#endif'; \
+	  echo ''; \
+	  echo 'static inline const char *td_version(void)'; \
+	  echo '{'; \
+	  echo '    return TD_VERSION_STRING;'; \
+	  echo '}'; \
+	  echo ''; \
+	  echo 'static inline const char *td_build_id(void)'; \
+	  echo '{'; \
+	  echo '    return TD_BUILD_ID;'; \
+	  echo '}'; \
+	  echo ''; \
+	  echo '#endif /* TD_VERSION_H */'; \
+	} > $@
+
 OBJS      := $(SRC:src/%.c=$(BUILD)/obj/%.o)
 TEST_SRCS := tests/test_main.c tests/test_arena.c tests/test_val.c \
              tests/test_expr.c tests/test_sheet.c tests/test_csv.c \
@@ -76,6 +109,7 @@ TEST_LDFLAGS ?= -fsanitize=address,undefined
 CONFIG := $(CC)|$(CPPFLAGS)|$(CFLAGS)|$(TEST_CFLAGS)|$(TEST_LDFLAGS)|$(LDFLAGS)|$(LDLIBS)|$(LIBTAM_CFLAGS)|$(LIBTAM_LIBS)|$(PREFIX)
 
 .PHONY: all command test smoke bench bench-quick install uninstall clean libtam-check FORCE
+.DEFAULT_GOAL := all
 
 all: command
 command: $(BIN)

@@ -5,7 +5,7 @@ A terminal spreadsheet multitool written in C, inspired by VisiData
 exploration and editing with a small runtime footprint and first-class Linux
 virtual console support, without a Python runtime.
 
-v1.0.0: implements Phases 0-6 (full core parity: tabular viewer/editor,
+v1.0.1: implements Phases 0-6 (full core parity: tabular viewer/editor,
 analytical workflows, embedded C expression engine, metasheets,
 help/command palette, terminal plotting, and extended zero-Python format
 loaders).
