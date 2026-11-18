@@ -1,0 +1,62 @@
+WHATNOW
+
+What tam-data is doing now and what comes next. Read this first; revise
+it at the end of every session (work/README-work).
+
+Updated: 2026-11-17, with W1
+
+
+STATE
+
+  tam-data is a C11 rewrite of VisiData on libtam, for any terminal
+  including the Linux console. Branch dev, pushed. VERSION reads 1.0.1.
+
+  Phases 0 to 6 are complete (1.0.0, 2026-11-13): CSV, TSV, JSON, JSONL,
+  INI, fixed-width and process-table loaders; navigation, selection,
+  search, sorting, editing, undo, the command log and replay;
+  aggregators, frequency tables, describe, pivot, melt and joins; the
+  expression engine and computed columns; metasheets, the command
+  palette, help and terminal plots.
+
+  1.0.1, the performance patch, is in progress (ROADMAP.md): the
+  benchmark harness is done (make bench, docs/BENCHMARKS.md, with the
+  1.0.0 baselines); the rest is not started.
+
+
+NEXT
+
+  1. The rest of 1.0.1 (ROADMAP.md, "v1.0.1"), each with a target from
+     the recorded baselines:
+     - streaming JSONL loader in src/json.c: mmap and line-by-line
+       parsing into a reusable scratch arena; 1M.jsonl from 1037.6 MiB
+       and 2.07 s to at most 300 MiB and 500 ms;
+     - single-pass describe_sheet in src/agg.c: 1M rows by 6 columns
+       from 4.46 s to under 1 s;
+     - CSV row pre-sizing and madvise(MADV_SEQUENTIAL) in src/csv.c and
+       src/sheet.c;
+     - then re-run make bench, update docs/BENCHMARKS.md with before
+       and after, and check make test (ASan, UBSan) and make smoke.
+
+  2. 1.1.0 (ROADMAP.md): cached string sort keys, a smaller td_val_t,
+     cold-start tuning.
+
+  3. Small fix: README still builds libtam into ~/.local/dev, which
+     Tamlinux retired on 2026-11-17. Development installs now go to
+     ~/.local (PREFIX=$HOME/.local), as libtam's README says. Update the
+     build notes and the libtam discovery fixed in c907254.
+
+
+WAITING FOR FRED
+
+  - VERSION already reads 1.0.1 although the 1.0.1 work is still open.
+    Should the performance work land as 1.0.2, or finish 1.0.1 first?
+    Every code change bumps the version.
+
+
+WATCH OUT
+
+  - Every code change bumps VERSION in the same commit.
+  - Performance claims need make bench numbers; ROADMAP.md marks figures
+    as targets until measured.
+  - libtam is linked statically; tam-data needs libtam's VERSION and its
+    own to move together when a libtam change is needed.
