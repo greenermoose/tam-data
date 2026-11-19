@@ -17,7 +17,7 @@ Build on the Phase 1 CSV/TSV viewer MVP (`v0.2.0`) to turn `tam-data` into an in
 
 ## 2. Target Files
 
-- `plans/P2-WORKPLAN.md` (this workplan)
+- `plans/P2-workplan.md` (this workplan)
 - `src/sheet.h`, `src/sheet.c` — `phys_nrows` tracking, per-sheet search state, regex selection/search, row deletion, filtered extraction, stable merge sort
 - `src/input.h`, `src/input.c` — Phase 2 `td_cmd_t` IDs, key bindings (`|`, `\`, `/`, `?`, `n`, `N`, `"`, `d`, `[`, `]`, `g|`, `g\`, `g/`, `g?`, `gd`, `g[`, `g]`), and 8 prompt kinds
 - `src/tam-data.c` — `row_order[cursor_row]` fix for `s`/`u`/`t`, command & prompt dispatch, `td_usage()` updates

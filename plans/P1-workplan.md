@@ -23,8 +23,8 @@ Turn the Phase 0 foundation into a functional tabular data explorer and editor c
 ├── README.md
 ├── ROADMAP.md
 ├── plans/
-│   ├── P0-WORKPLAN.md
-│   └── P1-WORKPLAN.md
+│   ├── P0-workplan.md
+│   └── P1-workplan.md
 ├── src/
 │   ├── version.h       # Version constants and build metadata macros
 │   ├── utf8.h          # Inline UTF-8 codec and codepoint width helpers

@@ -1,0 +1,42 @@
+W2 TAM-IDOL STANDARD
+
+Date: 2026-11-19
+AI harness: opencode 2.2.5
+AI model: big-pickle
+Commits: the commit that adds this record
+
+
+GUIDANCE
+
+  Fred: "Go ahead and rename plans lowercase. Your plan is approved.
+  Make it so."
+
+
+DONE
+
+  - Renamed AI_PROVENANCE.md to AI-BLAME.md, with the standard lead
+    and the dated attribution record kept below it unchanged.
+  - Added "Follows the tam-idol 0.1.0 standard." to README, a WHERE
+    THINGS ARE section, and the reviews/ and AI-BLAME.md entries.
+  - Brought the five folder READMEs into line with tam-idol 0.1.0,
+    keeping tam-data's own notes under IN THIS REPOSITORY.
+  - Added UPSTREAM.md (no code taken from other projects) and
+    reviews/README-reviews.
+  - Renamed the four plans to lower case: P0-workplan.md,
+    P1-implementation-plan.md, P1-workplan.md and P2-workplan.md.
+    Fixed the links in README and in the plans; the quoted old name
+    in work/history stays as written.
+  - Updated the live AI-BLAME.md links in README and work/history.
+  - tools/idol-check ../tam-data passes. No code changed; VERSION
+    stays 1.0.1.
+
+
+FAILED
+
+  - Nothing.
+
+
+HANDOFF
+
+  - The rest of 1.0.1 (make bench targets) is next; WHATNOW has the
+    detail.

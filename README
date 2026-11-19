@@ -28,6 +28,8 @@ Demo screenshot: docs/images/demo.png (see docs/images/README.md for capture
 details), showing the current demo, including typed columns, a pinned name
 column, and the row-selection status bar.
 
+Follows the tam-idol 0.1.0 standard.
+
 
 WHAT WORKS TODAY
 
@@ -71,8 +73,8 @@ WHAT WORKS TODAY
 - Strict C11 compilation and an AddressSanitizer/UndefinedBehaviorSanitizer
   test suite.
 
-See ROADMAP.md for planned features, plans/P1-WORKPLAN.md for the CSV/TSV
-MVP specification, and plans/P2-WORKPLAN.md for selection, search,
+See ROADMAP.md for planned features, plans/P1-workplan.md for the CSV/TSV
+MVP specification, and plans/P2-workplan.md for selection, search,
 filtering, and sorting.
 
 
@@ -167,6 +169,27 @@ measured for this project. Although the arena and mmap-backed CSV/TSV loader
 are implemented, passing unit tests do not establish large-file performance.
 
 
+WHERE THINGS ARE
+
+  src/, include/   the terminal spreadsheet (one module per file)
+  tests/           unit tests, sanitizer checks and the smoke test
+  bench/           the performance benchmark harness (make bench)
+  docs/            benchmark results and the captured demo image
+  ideas/           ideas from other data tools (one file per project)
+  arch/            architecture: principles, design and trade-offs
+  plans/           one plan per work phase (P0, P1, ...)
+  bugs/            one record per bug (B1, B2, ...)
+  reviews/         one record per review (R1, R2, ...)
+  work/            WHATNOW (read it first: what is next) and one record
+                   per work session (W1, W2, ...); history/ holds the
+                   records kept in docs/ai/ until 2026-11-17
+  ROADMAP.md       milestones with their version numbers
+  UPSTREAM.md      every piece of code we took from another project
+  AI-BLAME.md      how AI work is recorded here
+  COPYRIGHT        copyright and license notices
+  LICENSE          GNU General Public License, version 3
+
+
 LICENSE AND DEVELOPMENT PROVENANCE
 
 The portions of tam-data written by a human are Copyright (C) 2026 by Fred Horch
@@ -176,4 +199,4 @@ Public License, version 3 or (at your option) any later version
 (GPL-3.0-or-later). See LICENSE.
 
 AI-assisted development, verified commit attribution, and gaps in
-historical evidence are recorded in AI_PROVENANCE.md.
+historical evidence are recorded in AI-BLAME.md.

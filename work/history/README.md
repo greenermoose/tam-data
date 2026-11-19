@@ -2,7 +2,7 @@
 
 These records preserve guiding prompts, authorship boundaries, decisions,
 and verification. Each record identifies gaps rather than reconstructing
-missing history. See [the provenance overview](../../AI_PROVENANCE.md).
+missing history. See [the provenance overview](../../AI-BLAME.md).
 
 | Date | Record |
 | --- | --- |

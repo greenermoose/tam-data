@@ -23,7 +23,7 @@ Deliver a self-contained, warning-free, sanitizer-clean C11 foundation for `tam-
 ├── README.md
 ├── ROADMAP.md
 ├── plans/
-│   └── P0-WORKPLAN.md
+│   └── P0-workplan.md
 ├── src/
 │   ├── version.h       # Version constants and build metadata macros
 │   ├── arena.h         # Fast bump/page arena allocator for strings and row slices
