@@ -3,8 +3,7 @@
 This file says how tam-data records which AI did what: which harness and
 model did each piece of work, what it was asked, and which commits came
 of it. The repository follows the
-[Tamlinux AI provenance standard](https://github.com/greenermoose/tamlinux/blob/main/docs/ai-provenance-standard.md);
-"blame" is our newer word for the same thing.
+[Tamlinux AI blame standard](https://github.com/greenermoose/tamlinux/blob/main/work/ai-blame-standard.md).
 
 Work is handed from session to session in `work/`, as `work/README-work`
 describes:
@@ -33,7 +32,7 @@ An author name in Git alone is not evidence of human-only implementation.
 
 ### How to read this record
 
-The [Tamlinux public AI provenance standard](https://github.com/greenermoose/tamlinux/blob/main/docs/ai-provenance-standard.md)
+The [Tamlinux AI blame standard](https://github.com/greenermoose/tamlinux/blob/main/work/ai-blame-standard.md)
 explains the record format. Guiding prompts, decisions, verification, and
 evidence limitations are indexed in [work/history/README.md](work/history/README.md).
 Transcripts are retained privately; public records omit their identifiers.
